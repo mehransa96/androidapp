@@ -46,39 +46,32 @@ data class WeekMilestone(
 fun PregnancyTrackerDialog(
     show: Boolean,
     onDismiss: () -> Unit,
-    lastPeriodDateStr: String
+    lastPeriodDateStr: String,
+    cycleLength: Int = 28
 ) {
     if (!show) return
 
     val context = LocalContext.current
     val scrollState = rememberScrollState()
 
-    // Calculate pregnancy week based on last period
-    val lastPeriodDate = remember(lastPeriodDateStr) {
-        runCatching { LocalDate.parse(lastPeriodDateStr) }.getOrNull() ?: LocalDate.now().minusWeeks(14)
+    // Dating from the real last period and the user's own cycle length. Without a logged period
+    // (or with a very old one) nothing is guessed: it used to invent "week 14" or stick at 40.
+    val estimate = remember(lastPeriodDateStr, cycleLength) {
+        com.example.domain.PregnancyMath.estimate(
+            runCatching { LocalDate.parse(lastPeriodDateStr) }.getOrNull(),
+            cycleLength,
+            LocalDate.now()
+        )
     }
-
-    val daysSinceLmp = remember(lastPeriodDate) {
-        val days = ChronoUnit.DAYS.between(lastPeriodDate, LocalDate.now())
-        if (days < 0) 0L else days
-    }
-
-    var currentWeek by remember(daysSinceLmp) {
-        val w = (daysSinceLmp / 7).toInt() + 1
-        mutableIntStateOf(w.coerceIn(1, 40))
-    }
-
-    val estimatedDueDate = remember(lastPeriodDate) {
-        lastPeriodDate.plusDays(280) // 40 weeks standard
-    }
-    val dueJalali = remember(estimatedDueDate) {
-        JalaliCalendar.gregorianToJalali(estimatedDueDate)
-    }
-    val dueJalaliStr = "${dueJalali.year}/${dueJalali.month}/${dueJalali.day}"
-
-    val daysRemaining = remember(estimatedDueDate) {
-        val r = ChronoUnit.DAYS.between(LocalDate.now(), estimatedDueDate)
-        if (r < 0) 0L else r
+    var currentWeek by remember(estimate) { mutableIntStateOf(estimate.week) }
+    val dueJalaliStr = estimate.dueDate?.let { JalaliCalendar.gregorianToJalali(it).formatLong() } ?: "نامشخص"
+    val daysRemaining = estimate.daysUntilDue
+    val datingNote: String? = when (estimate.status) {
+        com.example.domain.PregnancyMath.Status.OK -> null
+        com.example.domain.PregnancyMath.Status.NO_LMP, com.example.domain.PregnancyMath.Status.FUTURE_LMP ->
+            "تاریخ آخرین پریود ثبت نشده است؛ برای محاسبه هفته بارداری و تاریخ زایمان، اولین روز آخرین پریود را در تقویم ثبت کنید. تا آن زمان می‌توانید هفته را با نوار زیر انتخاب کنید."
+        com.example.domain.PregnancyMath.Status.TOO_OLD ->
+            "آخرین پریود ثبت‌شده بیش از ۴۲ هفته پیش است و برای محاسبه بارداری فعلی معتبر نیست. هفته را با نوار زیر انتخاب کنید یا تاریخ را در تقویم اصلاح کنید."
     }
 
     // Trimester
@@ -176,6 +169,22 @@ fun PregnancyTrackerDialog(
                         .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    datingNote?.let { note ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text(
+                                note,
+                                modifier = Modifier.padding(12.dp),
+                                fontSize = 11.5.sp,
+                                lineHeight = 18.sp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+
                     // Week Slider Selector
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -199,7 +208,7 @@ fun PregnancyTrackerDialog(
                                     color = Color(0xFF9F1239)
                                 )
                                 Text(
-                                    text = "$daysRemaining روز تا زایمان",
+                                    text = if (daysRemaining != null) "$daysRemaining روز تا زایمان" else "تاریخ زایمان: نامشخص",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFFE11D48)

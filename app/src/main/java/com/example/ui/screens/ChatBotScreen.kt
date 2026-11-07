@@ -70,15 +70,50 @@ fun ChatBotScreen(viewModel: com.example.ui.viewmodel.MahitaViewModel, onNavigat
     val predictionInfo by viewModel.predictionInfo.collectAsState()
     val cycleInfo by viewModel.cycleInfo.collectAsState()
 
-    // Chat History Starts with a warm welcome in Persian
-    val messages = remember {
-        mutableStateListOf(
+    // The conversation is kept by the ViewModel for this session, so leaving the screen (to check
+    // the calendar, for example) no longer erases it. It is never written to disk.
+    val messages = viewModel.chatMessages
+    LaunchedEffect(Unit) {
+        if (messages.isEmpty()) messages.add(
             ChatMessage(
                 id = "welcome",
                 text = "سلام عزیزم! من هانیتا هستم، مشاور هوشمند سلامت شما. 🌸\nهر سوالی درباره دوران قاعدگی، کاهش دردهای پریود، تغذیه مناسب، علائم هورمونی یا حال خوب داری می‌تونی ازم بپرسی تا راهنماییت کنم. 💕",
                 isUser = false
             )
         )
+    }
+
+    // Voice input uses the phone's own speech recognizer (Persian). It used to only pretend:
+    // tapping the microphone twice inserted a fixed sentence instead of what was said.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val speechLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        isRecordingAudio = false
+        val spoken = result.data
+            ?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)
+            ?.firstOrNull()
+            ?.trim()
+        if (result.resultCode == android.app.Activity.RESULT_OK && !spoken.isNullOrBlank()) {
+            textInput = (textInput.trimEnd() + " " + spoken).trim().take(2_000)
+        }
+    }
+    fun startVoiceInput() {
+        val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
+            putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "سؤال خود را بگویید…")
+        }
+        try {
+            // The recognizer opens on top of the app; it must not trigger the app lock on return.
+            com.example.security.AppLockSession.skipNextLock = true
+            isRecordingAudio = true
+            speechLauncher.launch(intent)
+        } catch (e: android.content.ActivityNotFoundException) {
+            com.example.security.AppLockSession.skipNextLock = false
+            isRecordingAudio = false
+            android.widget.Toast.makeText(context, "تبدیل گفتار به متن روی این گوشی در دسترس نیست؛ لطفاً سؤال را تایپ کنید.", android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     // Quick suggestions based on common questions asked by women
@@ -373,7 +408,7 @@ fun ChatBotScreen(viewModel: com.example.ui.viewmodel.MahitaViewModel, onNavigat
                     TextField(
                         value = textInput,
                         onValueChange = { textInput = it },
-                        placeholder = { Text(if (isRecordingAudio) "در حال شنیدن... (درحال تبدیل صدا به متن)" else "پاسخ یا سوال خود را اینجا بنویسید...", fontSize = 13.sp) },
+                        placeholder = { Text(if (isRecordingAudio) "در حال شنیدن…" else "پاسخ یا سوال خود را اینجا بنویسید...", fontSize = 13.sp) },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("chat_input_field"),
@@ -417,19 +452,13 @@ fun ChatBotScreen(viewModel: com.example.ui.viewmodel.MahitaViewModel, onNavigat
                             .clip(CircleShape)
                             .background(if (isRecordingAudio) Color.Red.copy(alpha = 0.8f) else MaterialTheme.colorScheme.surfaceVariant)
                             .clickable {
-                                if (isRecordingAudio) {
-                                    isRecordingAudio = false
-                                    // Mock transcription since emulator lacks mic bytes
-                                    textInput += " [صدای ضبط شده: لطفا شرایط بدنی و روحیه من رو با دقت تحلیل کن] "
-                                } else {
-                                    isRecordingAudio = true
-                                }
+                                if (!isRecordingAudio && !isLoading) startVoiceInput()
                             },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Mic,
-                            contentDescription = "ضبط صدا",
+                            contentDescription = "پرسیدن با صدا",
                             tint = if (isRecordingAudio) Color.White else MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(24.dp)
                         )

@@ -257,7 +257,7 @@ fun AvatarGeneratorScreen(
     // Select avatar
     var selectedAvatarId by remember { mutableStateOf(currentAvatar) }
 
-    // Mock/Procedural Imagen 3 generation process with live animation
+    // Generates the avatar through the view model's image model, with live progress.
     val startAIGenerator: () -> Unit = {
         if (userPrompt.isBlank()) {
             coroutineScope.launch {
@@ -293,7 +293,8 @@ fun AvatarGeneratorScreen(
                 
                 delay(1000)
                 isGenerating = false
-                userPrompt = ""
+                // Keep the description after a failure so it can be retried without retyping.
+                if (base64Image != null) userPrompt = ""
                 focusManager.clearFocus()
             }
         }

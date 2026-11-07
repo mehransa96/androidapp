@@ -527,7 +527,7 @@ fun LogScreen(
                 }
                 Spacer(modifier = Modifier.width(20.dp))
                 IconButton(
-                    onClick = { waterIntake++ },
+                    onClick = { if (waterIntake < 16) waterIntake++ },
                     modifier = Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
                 ) {
                     Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -599,6 +599,23 @@ fun LogScreen(
             // Save to Room Button
             Button(
                 onClick = {
+                    // Weight and temperature typed on a Persian keyboard ("۶۲٫۵") used to be read as
+                    // empty and, because the form saves every field, erased the stored value.
+                    val weightText = com.example.security.AppLockManager.normalizeDecimal(weightInput)
+                    val bbtText = com.example.security.AppLockManager.normalizeDecimal(bbtInput)
+                    val weightValue = weightText.toFloatOrNull()
+                    val bbtValue = bbtText.toFloatOrNull()
+                    val inputError = when {
+                        weightText.isNotEmpty() && (weightValue == null || weightValue !in 25f..250f) ->
+                            "وزن باید عددی بین ۲۵ تا ۲۵۰ کیلوگرم باشد."
+                        bbtText.isNotEmpty() && (bbtValue == null || bbtValue !in 34f..42.5f) ->
+                            "دمای پایه بدن باید عددی بین ۳۴ تا ۴۲٫۵ درجه باشد."
+                        else -> null
+                    }
+                    if (inputError != null) {
+                        coroutineScope.launch { snackbarHostState.showSnackbar(inputError) }
+                        return@Button
+                    }
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
 
                     // Convert active symptoms map to PhysicalSymptomLog entities
@@ -628,8 +645,8 @@ fun LogScreen(
                         overallNotes = notes,
                         emoji = selectedEmoji,
                         waterIntake = waterIntake,
-                        bbt = bbtInput.toFloatOrNull(),
-                        weight = weightInput.toFloatOrNull(),
+                        bbt = bbtValue,
+                        weight = weightValue,
                         // The form shows every field of the day, so clearing a mood or note sticks.
                         replaceDayState = true,
                         measurementsFromForm = true
@@ -769,7 +786,7 @@ fun LogScreen(
         if (showCycleEditDialogInLog) {
             ProfessionalCycleEditDialog(
                 initialStartDate = selectedDate,
-                initialEndDate = selectedDate.plusDays(4),
+                initialEndDate = com.example.ui.components.earlierOf(selectedDate.plusDays(4), java.time.LocalDate.now()),
                 title = "ویرایش و ثبت دوره قاعدگی 🩸",
                 onDismissRequest = { showCycleEditDialogInLog = false },
                 onSaveCycle = { newStart, newEnd, length, flow, notes ->

@@ -530,6 +530,8 @@ fun SettingsDialog(
                                 value = editDuration,
                                 onValueChange = { editDuration = it },
                                 label = { Text("طول کل چرخه (روز)", fontSize = 11.sp) },
+                                // Once two periods are logged, forecasts use the real average instead.
+                                supportingText = { Text("تا ثبت دو پریود استفاده می‌شود؛ بعد از آن میانگین واقعی شما ملاک است.", fontSize = 9.5.sp, lineHeight = 13.sp) },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
@@ -550,7 +552,7 @@ fun SettingsDialog(
 
                             Button(
                                 onClick = {
-                                    val durationInt = editDuration.toIntOrNull()
+                                    val durationInt = com.example.security.AppLockManager.normalizeDigits(editDuration).toIntOrNull()
                                     if (durationInt == null || durationInt !in 21..45) {
                                         android.widget.Toast.makeText(context, "لطفاً طول چرخه معتبر بین ۲۱ تا ۴۵ روز وارد کنید.", android.widget.Toast.LENGTH_SHORT).show()
                                         return@Button

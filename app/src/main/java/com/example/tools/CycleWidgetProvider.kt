@@ -31,11 +31,29 @@ class CycleWidgetProvider : AppWidgetProvider() {
             try {
                 val views = buildViews(context)
                 appWidgetIds.forEach { appWidgetManager.updateAppWidget(it, views) }
+                scheduleMidnightRefresh(context, appWidgetIds)
             } catch (e: Exception) {
                 Log.w(TAG, "Widget update failed", e)
             } finally {
                 pending.finish()
             }
+        }
+    }
+
+    /** Last widget removed: stop the midnight refresh. */
+    override fun onDisabled(context: Context) {
+        try {
+            val pending = PendingIntent.getBroadcast(
+                context, 7301,
+                Intent(context, CycleWidgetProvider::class.java).setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE),
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pending != null) {
+                (context.getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager)?.cancel(pending)
+                pending.cancel()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not cancel the widget refresh", e)
         }
     }
 
@@ -54,6 +72,28 @@ class CycleWidgetProvider : AppWidgetProvider() {
                 context.sendBroadcast(intent)
             } catch (e: Exception) {
                 Log.w(TAG, "Widget refresh failed", e)
+            }
+        }
+
+        /**
+         * The system refreshes widgets only every few hours, so after midnight the widget kept
+         * showing yesterday's cycle day. One (non-waking) alarm just after midnight refreshes it.
+         */
+        private fun scheduleMidnightRefresh(context: Context, ids: IntArray) {
+            try {
+                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager ?: return
+                val intent = Intent(context, CycleWidgetProvider::class.java)
+                    .setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE)
+                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids)
+                val pending = PendingIntent.getBroadcast(
+                    context, 7301, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val nextMidnight = LocalDate.now().plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault())
+                    .plusMinutes(1).toInstant().toEpochMilli()
+                alarmManager.set(android.app.AlarmManager.RTC, nextMidnight, pending)
+            } catch (e: Exception) {
+                Log.w(TAG, "Midnight widget refresh not scheduled", e)
             }
         }
 

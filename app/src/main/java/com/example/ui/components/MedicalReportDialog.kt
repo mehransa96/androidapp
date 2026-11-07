@@ -54,7 +54,7 @@ fun MedicalReportDialog(
     val scrollState = rememberScrollState()
 
     val todayJalali = remember { JalaliCalendar.gregorianToJalali(LocalDate.now()) }
-    val todayJalaliStr = "${todayJalali.year}/${todayJalali.month}/${todayJalali.day}"
+    val todayJalaliStr = todayJalali.formatLong()
 
     // Analysis calculations
     val periodLogs = remember(logs) { logs.filter { it.periodFlow != "NONE" } }
@@ -90,8 +90,21 @@ fun MedicalReportDialog(
         if (waterLogs.isNotEmpty()) waterLogs.map { it.waterIntake }.average().toFloat() else null
     }
 
-    val regularityStatus = if (predictionInfo.hasEnoughData) "منظم (۹۶٪)" else "در حال محاسبه الگوی دقیق"
-    val avgPeriodDuration = if (periodLogs.isNotEmpty()) "۵ الی ۶ روز" else "۵ روز (پیش‌فرض)"
+    // Every figure below comes from the logged data. The report used to state a fixed
+    // "regular (96%)" and "5 to 6 days" and the cycle-length setting instead of the real average.
+    val realCycleLength = if (predictionInfo.hasEnoughData) predictionInfo.calculatedAverage else averageCycleLength
+    val cycleLengthText = if (predictionInfo.hasEnoughData) {
+        "$realCycleLength روز (از ${predictionInfo.totalCyclesCalculated} چرخه ثبت‌شده)"
+    } else {
+        "$realCycleLength روز (تخمینی؛ هنوز دو پریود ثبت نشده)"
+    }
+    val regularityStatus = when {
+        predictionInfo.totalCyclesCalculated < 3 -> "برای ارزیابی دست‌کم ۳ چرخه ثبت‌شده لازم است"
+        predictionInfo.isIrregular -> "نامنظم (اختلاف چرخه‌ها بیش از ۷ روز)"
+        else -> "منظم (اختلاف چرخه‌ها ۷ روز یا کمتر)"
+    }
+    val avgPeriodDuration = if (periodLogs.isNotEmpty()) "${predictionInfo.averagePeriodLength} روز" else "ثبت نشده"
+    val nextPeriodJalali = JalaliCalendar.gregorianToJalali(cycleInfo.predictedPeriodStart).formatLong()
 
     // Clinical text builder for sharing with doctor
     val clinicalSummaryText = buildString {
@@ -103,10 +116,10 @@ fun MedicalReportDialog(
         if (userWeight.isNotBlank()) appendLine("⚖️ وزن فعلی ثبت شده: $userWeight کیلوگرم")
         if (avgBbt != null) appendLine("🌡 میانگین دمای پایه بدن (BBT): ${String.format(java.util.Locale.US, "%.1f", avgBbt)} درجه")
         if (avgWater != null) appendLine("💧 میانگین مصرف آب: ${String.format(java.util.Locale.US, "%.1f", avgWater)} لیوان در روز")
-        appendLine("⏱ میانگین طول چرخه: $averageCycleLength روز")
+        appendLine("⏱ میانگین طول چرخه: $cycleLengthText")
         appendLine("🩸 میانگین طول دوره خونریزی: $avgPeriodDuration")
         appendLine("📊 وضعیت نظم چرخه: $regularityStatus")
-        appendLine("🔄 چرخه بعدی پیش‌بینی‌شده: ${cycleInfo.predictedPeriodStart}")
+        appendLine("🔄 شروع تقریبی پریود بعدی: $nextPeriodJalali")
         if (symptomFrequency.isNotEmpty()) {
             appendLine("----------------------------------")
             appendLine("🩺 شایع‌ترین علائم ثبت شده:")
@@ -257,7 +270,7 @@ fun MedicalReportDialog(
                     ) {
                         ClinicalMetricCard(
                             title = "میانگین طول چرخه",
-                            value = "$averageCycleLength روز",
+                            value = "$realCycleLength روز",
                             subtitle = "محدوده نرمال: ۲۱-۳۵",
                             modifier = Modifier.weight(1f),
                             accentColor = MaterialTheme.colorScheme.primary

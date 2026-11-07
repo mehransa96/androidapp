@@ -92,25 +92,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.animation.core.*
 
+/**
+ * Lengths of the user's last completed cycles, measured from one logged period start to the next.
+ * (This card used to draw invented values around the average with fixed month names.)
+ */
 @Composable
-fun CycleHistoryChart(averageCycleLength: Int = 28, modifier: Modifier = Modifier) {
-    val mockCycleLengths = remember(averageCycleLength) {
-        listOf(
-            averageCycleLength - 1,
-            averageCycleLength + 1,
-            averageCycleLength - 2,
-            averageCycleLength + 2,
-            averageCycleLength,
-            averageCycleLength - 1
-        ).map { it.coerceIn(21, 40) }
-    }
-    val months = listOf("دی", "بهمن", "اسفند", "فروردین", "اردیبهشت", "خرداد")
-    val average = mockCycleLengths.average().toInt()
-    val maxVal = (mockCycleLengths.maxOrNull() ?: 30).coerceAtLeast(32)
-    val minVal = (mockCycleLengths.minOrNull() ?: 24).coerceAtMost(24) - 2
-    
+fun CycleHistoryChart(
+    cycles: List<com.example.domain.CyclePredictor.CompletedCycle>,
+    averageCycleLength: Int,
+    modifier: Modifier = Modifier
+) {
     val pColor = SleekPrimary
-    val pLightColor = SleekPrimaryLight
+    val warnColor = Color(0xFFF59E0B)
     val bColor = SleekBorder
 
     Card(
@@ -120,22 +113,21 @@ fun CycleHistoryChart(averageCycleLength: Int = 28, modifier: Modifier = Modifie
         shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        text = "نوسانات ۶ ماه گذشته (طرح Recharts)",
+                        text = "طول چرخه‌های اخیر شما",
                         style = MaterialTheme.typography.titleSmall,
                         color = SleekTextDark,
                         fontWeight = FontWeight.Bold
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "نمودار خطی هماهنگی و منظم بودن دوره‌ها",
+                        text = "از روز اول هر پریود تا روز اول پریود بعدی",
                         fontSize = 10.sp,
                         color = SleekTextMedium
                     )
@@ -143,180 +135,79 @@ fun CycleHistoryChart(averageCycleLength: Int = 28, modifier: Modifier = Modifie
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(pLightColor)
+                        .background(SleekPrimaryLight)
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "میانگین: $average روز",
+                        text = "میانگین: $averageCycleLength روز",
                         fontSize = 10.sp,
                         color = SleekPrimaryDark,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
-            
-            Spacer(modifier = Modifier.height(20.dp))
-            
-            // Recharts style Area/Line Chart using Compose Canvas
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(130.dp)
-                    .padding(horizontal = 8.dp)
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (cycles.isEmpty()) {
+                Text(
+                    text = "برای رسم این نمودار دست‌کم دو پریود ثبت‌شده لازم است. با ثبت شروع هر پریود در تقویم، طول چرخه‌های شما اینجا نمایش داده می‌شود.",
+                    fontSize = 12.sp,
+                    lineHeight = 19.sp,
+                    color = SleekTextMedium
+                )
+                return@Column
+            }
+
+            val maxLen = maxOf(cycles.maxOf { it.lengthDays }, averageCycleLength, 35)
+            Row(
+                modifier = Modifier.fillMaxWidth().height(170.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Bottom
             ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val width = size.width
-                    val height = size.height
-                    val pointsCount = mockCycleLengths.size
-                    
-                    // Draw horizontal dotted gridlines
-                    val gridLinesCount = 3
-                    val gridSpacing = height / (gridLinesCount + 1)
-                    for (i in 1..gridLinesCount) {
-                        val y = i * gridSpacing
-                        drawLine(
-                            color = bColor.copy(alpha = 0.4f),
-                            start = androidx.compose.ui.geometry.Offset(0f, y),
-                            end = androidx.compose.ui.geometry.Offset(width, y),
-                            strokeWidth = 1f,
-                            pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
-                        )
-                    }
-
-                    // Calculate point offsets
-                    val stepX = if (pointsCount > 1) width / (pointsCount - 1) else width
-                    val rangeDiff = (maxVal - minVal).toFloat().coerceAtLeast(1f)
-                    val points = mockCycleLengths.mapIndexed { idx, length ->
-                        val ratio = ((length - minVal).toFloat() / rangeDiff).coerceIn(0f, 1f)
-                        val paddingY = 20f
-                        val usableHeight = (height - paddingY * 2).coerceAtLeast(10f)
-                        val y = height - paddingY - (ratio * usableHeight)
-                        val x = idx * stepX
-                        androidx.compose.ui.geometry.Offset(x, y)
-                    }
-
-                    // Create smooth cubic path
-                    val linePath = androidx.compose.ui.graphics.Path()
-                    if (points.isNotEmpty()) {
-                        linePath.moveTo(points.first().x, points.first().y)
-                        for (i in 1 until points.size) {
-                            val prev = points[i - 1]
-                            val curr = points[i]
-                            val controlPoint1 = androidx.compose.ui.geometry.Offset((prev.x + curr.x) / 2, prev.y)
-                            val controlPoint2 = androidx.compose.ui.geometry.Offset((prev.x + curr.x) / 2, curr.y)
-                            linePath.cubicTo(
-                                controlPoint1.x, controlPoint1.y,
-                                controlPoint2.x, controlPoint2.y,
-                                curr.x, curr.y
-                            )
-                        }
-                    }
-
-                    // Fill gradient under the curve (Area Chart)
-                    val areaPath = androidx.compose.ui.graphics.Path().apply {
-                        addPath(linePath)
-                        lineTo(width, height)
-                        lineTo(0f, height)
-                        close()
-                    }
-                    
-                    drawPath(
-                        path = areaPath,
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                pColor.copy(alpha = 0.25f),
-                                pColor.copy(alpha = 0.00f)
-                            ),
-                            startY = 0f,
-                            endY = height
-                        )
-                    )
-
-                    // Draw the primary line cap
-                    drawPath(
-                        path = linePath,
-                        color = pColor,
-                        style = Stroke(
-                            width = 3.dp.toPx(),
-                            cap = StrokeCap.Round,
-                            join = androidx.compose.ui.graphics.StrokeJoin.Companion.Round
-                        )
-                    )
-
-                    // Draw circular anchors/dots
-                    points.forEach { point ->
-                        drawCircle(
-                            color = pColor.copy(alpha = 0.15f),
-                            radius = 7.dp.toPx(),
-                            center = point
-                        )
-                        drawCircle(
-                            color = pColor,
-                            radius = 4.dp.toPx(),
-                            center = point
-                        )
-                        drawCircle(
-                            color = Color.White,
-                            radius = 1.5.dp.toPx(),
-                            center = point
-                        )
-                    }
-                }
-
-                // Values display
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    mockCycleLengths.forEachIndexed { _, length ->
+                cycles.forEach { cycle ->
+                    val barColor = if (cycle.isTypical) pColor else warnColor
+                    val month = com.example.utils.JalaliCalendar.gregorianToJalali(cycle.start).monthName
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        Text("${cycle.lengthDays}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = barColor)
+                        Spacer(Modifier.height(2.dp))
                         Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                            contentAlignment = Alignment.TopCenter
-                        ) {
-                            val ratio = (length - minVal).toFloat() / (maxVal - minVal).toFloat()
-                            val topPaddingDp = (100 - (ratio * 70).coerceIn(0f, 100f)).dp
-                            
-                            Box(
-                                modifier = Modifier
-                                    .padding(top = topPaddingDp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color.White)
-                                    .border(0.5.dp, SleekBorder, RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 4.dp, vertical = 1.dp)
-                            ) {
-                                Text(
-                                    text = "$length روز",
-                                    fontSize = 8.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = SleekPrimaryDark
-                                )
-                            }
-                        }
+                            Modifier
+                                .fillMaxWidth(0.7f)
+                                .fillMaxHeight((cycle.lengthDays.toFloat() / maxLen).coerceIn(0.05f, 0.82f))
+                                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                                .background(barColor.copy(alpha = 0.85f))
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(month, fontSize = 9.sp, color = SleekTextMedium, maxLines = 1)
                     }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(10.dp))
-            
-            // Month labels
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                months.forEach { month ->
-                    Text(
-                        text = month,
-                        fontSize = 9.sp,
-                        color = SleekTextMedium,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.width(36.dp),
-                        textAlign = TextAlign.Center
-                    )
-                }
+            val typical = cycles.filter { it.isTypical }
+            val spread = if (typical.size >= 2) typical.maxOf { it.lengthDays } - typical.minOf { it.lengthDays } else 0
+            Text(
+                text = when {
+                    typical.size < 2 -> "با ثبت چرخه‌های بیشتر، نظم چرخه شما هم ارزیابی می‌شود."
+                    spread <= 7 -> "اختلاف کوتاه‌ترین و بلندترین چرخه $spread روز است؛ چرخه شما منظم به نظر می‌رسد."
+                    else -> "اختلاف چرخه‌ها $spread روز است؛ چرخه کمی نامنظم است. اگر این نوسان ادامه داشت با پزشک مشورت کنید."
+                },
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                color = SleekTextMedium
+            )
+            if (cycles.any { !it.isTypical }) {
+                Text(
+                    text = "ستون نارنجی یعنی فاصله کمتر از ۲۱ یا بیشتر از ۴۵ روز؛ اگر پریودی را ثبت نکرده‌اید، آن را در تقویم اضافه کنید تا میانگین دقیق‌تر شود.",
+                    fontSize = 10.5.sp,
+                    lineHeight = 16.sp,
+                    color = warnColor
+                )
             }
         }
     }

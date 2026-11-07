@@ -275,6 +275,22 @@ object CyclePredictor {
         )
     }
 
+    /** One completed cycle: the first day of its period and the days until the next period began. */
+    data class CompletedCycle(val start: LocalDate, val lengthDays: Int) {
+        /** Outside 21..45 days: usually a missed log or a skipped period, shown but not trusted. */
+        val isTypical: Boolean get() = lengthDays in MIN_CYCLE_LENGTH..MAX_CYCLE_LENGTH
+    }
+
+    /**
+     * The real lengths of the last [max] completed cycles, oldest first, measured from one logged
+     * period start to the next. Used by the cycle-length chart (it used to draw invented values).
+     */
+    fun recentCycles(bleedingDays: Collection<LocalDate>, today: LocalDate = LocalDate.now(), max: Int = MAX_CYCLES_FOR_AVERAGE): List<CompletedCycle> {
+        val starts = periodStarts(bleedingDays.filter { !it.isAfter(today) })
+        return starts.zipWithNext { a, b -> CompletedCycle(a, ChronoUnit.DAYS.between(a, b).toInt()) }
+            .takeLast(max.coerceAtLeast(1))
+    }
+
     /** First occurrence of [cycleDay] (1-based) that is strictly after [today]. */
     fun nextOccurrenceOfCycleDay(lastPeriodStart: LocalDate, cycleLength: Int, cycleDay: Int, today: LocalDate): LocalDate {
         val length = clampCycleLength(cycleLength).toLong()

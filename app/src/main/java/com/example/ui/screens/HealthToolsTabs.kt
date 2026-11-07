@@ -71,7 +71,7 @@ import java.time.temporal.ChronoUnit
 internal fun PillTab(viewModel: HealthToolsViewModel) {
     val pill by viewModel.pill.collectAsState()
     val entries by viewModel.entries.collectAsState()
-    val today = remember { LocalDate.now() }
+    val today by viewModel.today.collectAsState()
     var pickStart by remember { mutableStateOf(false) }
     var pickTime by remember { mutableStateOf(false) }
     val takenDays = remember(entries) {
@@ -212,7 +212,7 @@ internal fun BreastExamTab(viewModel: HealthToolsViewModel) {
     val entries by viewModel.entries.collectAsState()
     val cycle by viewModel.cycle.collectAsState()
     val reminder by viewModel.breastReminder.collectAsState()
-    val today = remember { LocalDate.now() }
+    val today by viewModel.today.collectAsState()
     val last = entries.firstOrNull { it.type == HealthEntryType.BREAST_EXAM }
     val lastDate = last?.let { runCatching { LocalDate.parse(it.dateStr) }.getOrNull() }
     val next = BreastSelfExam.nextDate(cycle?.prediction?.lastPeriodStart, cycle?.prediction?.averageCycleLength ?: 28, today)

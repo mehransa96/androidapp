@@ -121,7 +121,7 @@ fun TodayTab(
                 Icons.Filled.Healing, Color(0xFFE11D48), "today_log_symptoms", onLogSymptoms, Modifier.weight(1f))
             QuickAction("ویرایش تاریخ", lastJalali, Icons.Filled.EditCalendar, MaterialTheme.colorScheme.secondary,
                 "quick_edit_cycle_button", onEditCycle, Modifier.weight(1f))
-            QuickAction("تقویم", "$averageCycleLength روزه", Icons.Filled.CalendarMonth, Color(0xFF6366F1),
+            QuickAction("تقویم", "${predictionInfo.calculatedAverage} روزه", Icons.Filled.CalendarMonth, Color(0xFF6366F1),
                 "today_open_calendar", onOpenCalendar, Modifier.weight(1f))
         }
         Spacer(Modifier.height(10.dp))

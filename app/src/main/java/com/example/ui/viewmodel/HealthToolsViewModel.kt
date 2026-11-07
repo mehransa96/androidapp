@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -46,9 +47,16 @@ class HealthToolsViewModel(application: Application) : AndroidViewModel(applicat
         val insights: CycleInsights.Result
     )
 
-    // Follows a changed cycle length setting too (it used to be read once).
-    val cycle: StateFlow<CycleState?> = combine(bleedingDays, userPrefs.averageCycleLength) { days, defaultLength ->
-        val today = LocalDate.now()
+    /** Today, also after midnight while the screen stays open (the pill of "today" moved on too late). */
+    val today: StateFlow<LocalDate> = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(LocalDate.now())
+            kotlinx.coroutines.delay(30_000)
+        }
+    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LocalDate.now())
+
+    // Follows a changed cycle length setting and the date change too (both used to be read once).
+    val cycle: StateFlow<CycleState?> = combine(bleedingDays, userPrefs.averageCycleLength, today) { days, defaultLength, today ->
         val prediction = CyclePredictor.predict(days, defaultLength, today)
         CycleState(
             prediction = prediction,
@@ -200,7 +208,11 @@ class HealthToolsViewModel(application: Application) : AndroidViewModel(applicat
         _busy.value = true
         viewModelScope.launch {
             try {
-                LocalSnapshots.restore(getApplication(), snapshot)
+                // Read the chosen copy first, then keep a safety copy of the current data (as a file
+                // restore does), so going back to an older day can itself be undone.
+                val root = LocalSnapshots.read(snapshot) ?: throw IllegalStateException("این نسخه پشتیبان خوانا نیست")
+                LocalSnapshots.takeIfDue(getApplication(), force = true)
+                com.example.tools.BackupManager.applyJson(getApplication(), root)
                 onDone()
             } catch (e: Exception) {
                 _message.value = "بازیابی انجام نشد: ${e.message ?: "نسخه پشتیبان خوانا نیست"}"

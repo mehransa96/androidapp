@@ -126,7 +126,14 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 
-                                Spacer(modifier = Modifier.height(24.dp))
+                                // The report says "for support", so it must be possible to copy it.
+                                TextButton(onClick = {
+                                    val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                    clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Hanita crash", crashStackTrace ?: ""))
+                                    android.widget.Toast.makeText(this@MainActivity, "گزارش خطا کپی شد", android.widget.Toast.LENGTH_SHORT).show()
+                                }) { Text("کپی گزارش خطا 📋") }
+
+                                Spacer(modifier = Modifier.height(16.dp))
                                 
                                 if (confirmReset) {
                                     AlertDialog(

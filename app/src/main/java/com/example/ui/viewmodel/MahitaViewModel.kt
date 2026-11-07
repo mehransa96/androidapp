@@ -76,9 +76,21 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
 
     fun revokeAiConsent() = prefsManager.setAiConsentGiven(false)
 
+    /** The AI chat of this session (kept while the app runs, never stored on disk). */
+    val chatMessages = androidx.compose.runtime.mutableStateListOf<com.example.ui.screens.ChatMessage>()
+
     val userName: StateFlow<String> = prefsManager.userName
     val userWeight: StateFlow<String> = prefsManager.userWeight
-    val lastPeriodDate: StateFlow<String> = prefsManager.lastPeriodDate
+    /**
+     * First day of the last period, from the logged bleeding days (empty when none is logged).
+     * A separately stored setting used to be overwritten by editing an older
+     * period and was never cleared by deleting one, so the pregnancy tracker, the chat and the
+     * "edit date" button showed a wrong date.
+     */
+    val lastPeriodDate: StateFlow<String> by lazy {
+        prediction.map { it.lastPeriodStart?.toString() ?: "" }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, prediction.value.lastPeriodStart?.toString() ?: "")
+    }
     val userAvatar: StateFlow<String> = prefsManager.userAvatar
 
     fun incrementWater() {
@@ -269,16 +281,24 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
         logs.mapNotNull { runCatching { LocalDate.parse(it.dateStr) }.getOrNull() }
     }
 
+    // Today is part of the input: "days left" and "late" used to stay on yesterday's value when
+    // the app was left open past midnight.
     private val prediction: StateFlow<CyclePredictor.Prediction> = combine(
         bleedingDays,
-        prefsManager.averageCycleLength
-    ) { days, defaultLength ->
-        CyclePredictor.predict(days, defaultLength)
+        prefsManager.averageCycleLength,
+        currentDate
+    ) { days, defaultLength, today ->
+        CyclePredictor.predict(days, defaultLength, today)
     }.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,
         CyclePredictor.predict(emptyList(), prefsManager.averageCycleLength.value)
     )
+
+    /** Real lengths of the last completed cycles (cycle-length chart). */
+    val recentCycles: StateFlow<List<CyclePredictor.CompletedCycle>> = combine(bleedingDays, currentDate) { days, today ->
+        CyclePredictor.recentCycles(days, today)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** The single source of truth for every cycle forecast shown in the app (dashboard, calendar...). */
     val cyclePrediction: StateFlow<CyclePredictor.Prediction> get() = prediction
@@ -549,7 +569,11 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun savePeriodRangeNow(startDate: LocalDate, endDate: LocalDate, flow: String, notes: String) {
         run {
             val start = if (startDate.isAfter(endDate)) endDate else startDate
-            val end = if (startDate.isAfter(endDate)) startDate else endDate
+            val requestedEnd = if (startDate.isAfter(endDate)) startDate else endDate
+            // Future days are never stored as bleeding (they would later count as real data).
+            val today = LocalDate.now()
+            if (start.isAfter(today)) return
+            val end = if (requestedEnd.isAfter(today)) today else requestedEnd
 
             val recordId = "cycle_${start}"
             val record = com.example.data.model.CycleRecord(

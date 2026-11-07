@@ -30,7 +30,6 @@ fun SymptomChartsScreen(
 ) {
     val allLogs by viewModel.allLogs.collectAsState()
     val cycleInfo by viewModel.cycleInfo.collectAsState()
-    val averageCycleLength by viewModel.averageCycleLength.collectAsState()
 
     // Filter logs for the last 90 days
     val threeMonthsAgo = LocalDate.now().minusDays(90)
@@ -45,46 +44,20 @@ fun SymptomChartsScreen(
         }
     }
 
-    val customPhysical by viewModel.customPhysicalSymptoms.collectAsState()
-    val customMood by viewModel.customMoodSymptoms.collectAsState()
-
-    // Tally physical symptoms
-    val physicalSymptoms = (listOf("درد شکم", "سردرد", "نفخ", "حساسیت سینه", "جوش") + customPhysical).distinct()
-    val physicalTally = remember(recentLogs, physicalSymptoms) {
-        val counts = mutableMapOf<String, Float>()
-        physicalSymptoms.forEach { counts[it] = 0f }
-        recentLogs.forEach { log ->
-            if (log.symptoms.isNotBlank()) {
-                val symptomsList = log.symptoms.split(",")
-                symptomsList.forEach { s ->
-                    val trimmed = s.trim()
-                    if (counts.containsKey(trimmed)) {
-                        counts[trimmed] = counts[trimmed]!! + 1f
-                    }
-                }
-            }
-        }
-        counts
-    }
-
-    // Tally moods
-    val moodSymptoms = (listOf("اضطراب", "افسردگی", "استرس", "انرژی پایین", "عدم تمرکز") + customMood).distinct()
-    val moodTally = remember(recentLogs, moodSymptoms) {
-        val counts = mutableMapOf<String, Float>()
-        moodSymptoms.forEach { counts[it] = 0f }
-        recentLogs.forEach { log ->
-            if (log.moods.isNotBlank()) {
-                val moodList = log.moods.split(",")
-                moodList.forEach { m ->
-                    val trimmed = m.trim()
-                    if (counts.containsKey(trimmed)) {
-                        counts[trimmed] = counts[trimmed]!! + 1f
-                    }
-                }
-            }
-        }
-        counts
-    }
+    // Every symptom and mood really logged is counted (the most frequent first). A fixed list
+    // used to miss most entries: "جوش صورت", cramps from the quick log, custom moods...
+    fun tally(field: (com.example.data.model.DailyLog) -> String): Map<String, Float> =
+        recentLogs.flatMap { log -> field(log).split(",").map { it.trim() } }
+            .filter { it.isNotBlank() && ':' !in it }
+            .groupingBy { it }.eachCount()
+            .entries.sortedByDescending { it.value }
+            .take(7)
+            .associate { it.key to it.value.toFloat() }
+    val physicalTally = remember(recentLogs) { tally { it.symptoms } }
+    val physicalSymptoms = physicalTally.keys.toList()
+    val moodTally = remember(recentLogs) { tally { it.moods } }
+    val moodSymptoms = moodTally.keys.toList()
+    val prediction by viewModel.cyclePrediction.collectAsState()
 
     Scaffold(
         topBar = {
@@ -109,7 +82,8 @@ fun SymptomChartsScreen(
             // Visual Hormone fluctuations chart using Vico
             HormoneLevelsChartCard(
                 cycleInfo = cycleInfo,
-                averageCycleLength = averageCycleLength
+                // The same real average as the dashboard (not the setting used before any data).
+                averageCycleLength = prediction.averageCycleLength
             )
 
             ChartCard(

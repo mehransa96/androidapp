@@ -80,30 +80,48 @@ fun RemindersScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var hasNotificationPermission by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
-            } else {
-                true
-            }
-        )
+    // "Allowed" means notifications really reach the user: on Android 12 and older there is no
+    // runtime permission, but notifications can still be switched off in the system settings.
+    fun notificationsAllowed(): Boolean =
+        androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
+    var hasNotificationPermission by remember { mutableStateOf(notificationsAllowed()) }
+    // Re-check when the user comes back from the system settings.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) hasNotificationPermission = notificationsAllowed()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    fun openNotificationSettings() {
+        try {
+            com.example.security.AppLockSession.skipNextLock = true
+            context.startActivity(
+                Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: Exception) {
+            com.example.security.AppLockSession.skipNextLock = false
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        hasNotificationPermission = isGranted
-        if (isGranted) {
+        hasNotificationPermission = notificationsAllowed()
+        if (isGranted && hasNotificationPermission) {
             coroutineScope.launch {
                 snackbarHostState.showSnackbar("مجوز اعلان‌های سیستم با موفقیت فعال شد ✅")
             }
         } else {
+            // After "don't ask again" Android answers at once without a dialog: open the settings page.
+            openNotificationSettings()
             coroutineScope.launch {
-                snackbarHostState.showSnackbar("دسترسی اعلان‌ها داده نشد؛ لطفاً از تنظیمات برنامه آن را تایید کنید ⚠️")
+                snackbarHostState.showSnackbar("اعلان‌ها را از تنظیمات گوشی برای هانیتا روشن کنید ⚠️")
             }
         }
     }
@@ -272,8 +290,12 @@ fun RemindersScreen(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Button(
                                     onClick = {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        val needsRuntimePermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                                        if (needsRuntimePermission) {
                                             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                        } else {
+                                            openNotificationSettings()
                                         }
                                     },
                                     modifier = Modifier.fillMaxWidth(),
@@ -1059,11 +1081,16 @@ fun RemindersScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val medTimeValid = com.example.domain.TimeText.normalize(medTime) != null
                         OutlinedTextField(
                             value = medTime,
-                            onValueChange = { medTime = it },
+                            onValueChange = { medTime = it.take(5) },
                             label = { Text("ساعت مصرف", fontSize = 12.sp) },
                             placeholder = { Text("مثلاً: 14:00", fontSize = 11.sp) },
+                            isError = medTime.isNotBlank() && !medTimeValid,
+                            supportingText = if (medTime.isNotBlank() && !medTimeValid) {
+                                { Text("ساعت را مثل ۱۴:۳۰ وارد کنید", fontSize = 10.sp) }
+                            } else null,
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
@@ -1119,11 +1146,16 @@ fun RemindersScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (medName.isNotBlank() && medTime.isNotBlank()) {
+                        val normalizedTime = com.example.domain.TimeText.normalize(medTime)
+                        if (normalizedTime == null) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("ساعت مصرف معتبر نیست؛ مثلاً ۰۹:۰۰ یا ۲۱:۳۰ وارد کنید.") }
+                        } else if (medName.isBlank()) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("نام دارو یا مکمل را وارد کنید.") }
+                        } else {
                             val newReminder = MedicineReminder(
                                 id = UUID.randomUUID().toString(),
-                                name = medName,
-                                time = medTime,
+                                name = medName.trim(),
+                                time = normalizedTime,
                                 dosage = medDosage,
                                 isEnabled = true,
                                 type = medType
@@ -1189,10 +1221,15 @@ fun RemindersScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val editTimeValid = com.example.domain.TimeText.normalize(editMedTime) != null
                         OutlinedTextField(
                             value = editMedTime,
-                            onValueChange = { editMedTime = it },
+                            onValueChange = { editMedTime = it.take(5) },
                             label = { Text("ساعت مصرف", fontSize = 12.sp) },
+                            isError = !editTimeValid,
+                            supportingText = if (!editTimeValid) {
+                                { Text("ساعت را مثل ۱۴:۳۰ وارد کنید", fontSize = 10.sp) }
+                            } else null,
                             modifier = Modifier.weight(1f),
                             singleLine = true
                         )
@@ -1235,10 +1272,13 @@ fun RemindersScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (editMedName.isNotBlank()) {
+                        val normalizedEditTime = com.example.domain.TimeText.normalize(editMedTime)
+                        if (normalizedEditTime == null) {
+                            coroutineScope.launch { snackbarHostState.showSnackbar("ساعت مصرف معتبر نیست؛ مثلاً ۰۹:۰۰ یا ۲۱:۳۰ وارد کنید.") }
+                        } else if (editMedName.isNotBlank()) {
                             val updatedItem = medItem.copy(
                                 name = editMedName.trim(),
-                                time = editMedTime.trim(),
+                                time = normalizedEditTime,
                                 dosage = editMedDosage.trim(),
                                 type = editMedType
                             )

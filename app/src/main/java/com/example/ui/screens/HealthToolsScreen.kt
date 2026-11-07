@@ -199,7 +199,7 @@ internal fun ChoiceChips(options: Map<String, String>, selected: String?, onSele
 private fun DailyHealthTab(viewModel: HealthToolsViewModel) {
     val entries by viewModel.entries.collectAsState()
     val cycle by viewModel.cycle.collectAsState()
-    val today = remember { LocalDate.now() }
+    val today by viewModel.today.collectAsState()
     var date by remember { mutableStateOf(today) }
     var pickDate by remember { mutableStateOf(false) }
     val dateStr = date.toString()

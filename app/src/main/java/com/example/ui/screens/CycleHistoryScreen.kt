@@ -44,6 +44,8 @@ fun CycleHistoryScreen(
     val context = LocalContext.current
     val records by viewModel.allCycleRecords.collectAsState()
     val avgCycleLength by viewModel.averageCycleLength.collectAsState()
+    // The figure shown is the real average of the logged cycles (the setting is only the fallback).
+    val prediction by viewModel.cyclePrediction.collectAsState()
 
     // Dialog state for editing an existing record or creating a new one
     var recordToEdit by remember { mutableStateOf<CycleRecord?>(null) }
@@ -182,7 +184,7 @@ fun CycleHistoryScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("میانگین طول چرخه", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text("$avgCycleLength روز", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text("${prediction.averageCycleLength} روز", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         }
                         Box(modifier = Modifier.width(1.dp).height(30.dp).background(MaterialTheme.colorScheme.outlineVariant))
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
