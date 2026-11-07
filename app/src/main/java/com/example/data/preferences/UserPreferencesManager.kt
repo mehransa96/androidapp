@@ -10,8 +10,32 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class UserPreferencesManager(context: Context) {
-    private val prefs: SharedPreferences = context.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+/**
+ * The local account (profile created at first launch) and every user setting.
+ *
+ * One shared instance per process: every screen, ViewModel, widget and worker sees the same values,
+ * so a change made in one place (for example the cycle length) is visible everywhere at once.
+ * Values live in the app's private storage on the phone and are never sent to a server.
+ */
+class UserPreferencesManager private constructor(context: Context, @Suppress("UNUSED_PARAMETER") shared: Boolean) {
+    private val prefs: SharedPreferences = context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+
+    companion object {
+        const val NAME = "user_prefs"
+        const val MAX_NAME_LENGTH = 30
+
+        @Volatile
+        private var instance: UserPreferencesManager? = null
+
+        operator fun invoke(context: Context): UserPreferencesManager =
+            instance ?: synchronized(this) {
+                instance ?: UserPreferencesManager(context.applicationContext, true).also { instance = it }
+            }
+
+        /** Cleans a display name typed at sign-up: trimmed, single spaces, limited length. */
+        fun sanitizeName(raw: String): String =
+            raw.trim().replace(Regex("\\s+"), " ").take(MAX_NAME_LENGTH)
+    }
 
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
     private val remindersType = Types.newParameterizedType(List::class.java, MedicineReminder::class.java)
@@ -88,26 +112,60 @@ class UserPreferencesManager(context: Context) {
     val customMoodSymptoms: StateFlow<List<String>> = _customMoodSymptoms.asStateFlow()
 
 
-    fun login(name: String, cycleLength: Int = 28) {
-        prefs.edit().apply {
-            putString("user_name", name)
-            putBoolean("is_logged_in", true)
-            putInt("average_cycle_length", cycleLength)
-            apply()
-        }
-        _userName.value = name
+    /** When the local account was created (epoch millis), 0 for accounts made before this field existed. */
+    val registeredAt: Long get() = prefs.getLong("registered_at", 0L)
+
+    /**
+     * Creates the local account on this phone (first launch). No server or Google account is involved.
+     * Written synchronously so the account survives even if the app is killed right after sign-up.
+     */
+    @android.annotation.SuppressLint("ApplySharedPref")
+    fun register(name: String, cycleLength: Int = 28) {
+        val clean = sanitizeName(name)
+        val length = cycleLength.coerceIn(21, 45)
+        prefs.edit()
+            .putString("user_name", clean)
+            .putBoolean("is_logged_in", true)
+            .putInt("average_cycle_length", length)
+            .putLong("registered_at", System.currentTimeMillis())
+            .commit()
+        _userName.value = clean
         _isLoggedIn.value = true
-        _averageCycleLength.value = cycleLength
+        _averageCycleLength.value = length
     }
 
-    fun logout() {
-        prefs.edit().apply {
-            remove("user_name")
-            putBoolean("is_logged_in", false)
-            apply()
-        }
-        _userName.value = ""
-        _isLoggedIn.value = false
+    fun setUserName(name: String) {
+        val clean = sanitizeName(name)
+        if (clean.isBlank()) return
+        prefs.edit().putString("user_name", clean).apply()
+        _userName.value = clean
+    }
+
+    /**
+     * Re-reads every value from disk. Needed after a backup restore or a full wipe, which write the
+     * preference file directly while this shared instance stays alive in the same process.
+     */
+    fun reload() {
+        _userName.value = prefs.getString("user_name", "") ?: ""
+        _userWeight.value = prefs.getString("user_weight", "65") ?: "65"
+        _lastPeriodDate.value = prefs.getString("last_period_date", "") ?: ""
+        _userAvatar.value = prefs.getString("user_avatar", "avatar_default") ?: "avatar_default"
+        _isLoggedIn.value = prefs.getBoolean("is_logged_in", false)
+        _isNotificationEnabled.value = prefs.getBoolean("is_notification_enabled", true)
+        _isAiRemindersEnabled.value = prefs.getBoolean("is_ai_reminders_enabled", true)
+        _isOvulationRemindersEnabled.value = prefs.getBoolean("is_ovulation_reminders_enabled", true)
+        _daysBefore.value = prefs.getInt("days_before_notification", 1)
+        _ovulationDaysBefore.value = prefs.getInt("ovulation_days_before_notification", 1)
+        _notificationHour.value = prefs.getInt("notification_hour", 9)
+        _notificationMinute.value = prefs.getInt("notification_minute", 0)
+        _averageCycleLength.value = prefs.getInt("average_cycle_length", 28)
+        _appTheme.value = prefs.getString("app_theme", "COSMIC_BLOSSOM") ?: "COSMIC_BLOSSOM"
+        _themeMode.value = prefs.getString("theme_mode", "SYSTEM") ?: "SYSTEM"
+        _appFont.value = prefs.getString("app_font", "CLASSIC") ?: "CLASSIC"
+        _medicationReminders.value = getMedicationRemindersFromPrefs()
+        _aiConsentGiven.value = prefs.getBoolean("ai_data_consent", false)
+        _customPhysicalSymptoms.value = prefs.getStringSet("custom_physical_symptoms", emptySet())?.toList() ?: emptyList()
+        _customMoodSymptoms.value = prefs.getStringSet("custom_mood_symptoms", emptySet())?.toList() ?: emptyList()
     }
 
     fun setNotificationEnabled(enabled: Boolean) {

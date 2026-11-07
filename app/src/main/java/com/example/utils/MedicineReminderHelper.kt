@@ -71,10 +71,11 @@ object MedicineReminderHelper {
                         calendar.add(Calendar.DAY_OF_YEAR, 1)
                     }
 
-                    alarmManager.setRepeating(
+                    // Inexact repeating alarms can be delayed by hours under Doze; a one-shot alarm
+                    // that is re-armed when it fires (MedicineReminderReceiver) stays on time.
+                    alarmManager.setAndAllowWhileIdle(
                         AlarmManager.RTC_WAKEUP,
                         calendar.timeInMillis,
-                        AlarmManager.INTERVAL_DAY,
                         pendingIntent
                     )
                     Log.d("MedicineReminderHelper", "Scheduled ${reminder.name} at ${reminder.time}")

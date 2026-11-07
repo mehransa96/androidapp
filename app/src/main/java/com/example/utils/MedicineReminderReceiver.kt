@@ -49,5 +49,7 @@ class MedicineReminderReceiver : BroadcastReceiver() {
             .setContentIntent(pendingIntent)
 
         notificationManager.notify(medId.hashCode(), builder.build())
+        // Re-arm tomorrow's one-shot alarm.
+        RescheduleWorker.runNow(context)
     }
 }

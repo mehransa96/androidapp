@@ -12,6 +12,12 @@ interface CycleRecordDao {
     @Query("SELECT * FROM cycle_records")
     fun getAllCycleRecords(): Flow<List<CycleRecord>>
 
+    @Query("SELECT * FROM cycle_records")
+    suspend fun getAllCycleRecordsList(): List<CycleRecord>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCycleRecords(records: List<CycleRecord>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCycleRecord(cycleRecord: CycleRecord)
 

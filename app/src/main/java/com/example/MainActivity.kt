@@ -28,6 +28,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.ui.screens.CalendarScreen
 import com.example.ui.screens.DashboardScreen
+import com.example.ui.screens.HomeTab
 import com.example.ui.screens.LogScreen
 import com.example.ui.screens.LoginScreen
 import com.example.ui.screens.MoodScreen
@@ -51,11 +52,18 @@ import androidx.compose.ui.unit.sp
 class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_NAVIGATE_TO = "navigate_to"
-        private val DEEP_LINK_ROUTES = setOf("log", "calendar", "reminders")
+        private val DEEP_LINK_ROUTES = setOf("log", "calendar", "reminders", "tools")
     }
+
+    private lateinit var lockManager: com.example.security.AppLockManager
+    /** True while the app-lock screen covers the app (set again every time the app goes to background). */
+    private var isLocked by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lockManager = com.example.security.AppLockManager(this)
+        isLocked = lockManager.isEnabled
+        applySecureFlag()
         
         enableEdgeToEdge()
         setContent {
@@ -173,6 +181,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 // Ensure layout is Right-to-Left for Persian language
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                  Box(modifier = Modifier.fillMaxSize()) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
@@ -180,6 +189,7 @@ class MainActivity : ComponentActivity() {
                         val navController = rememberNavController()
                         val isLoggedIn by viewModel.isLoggedIn.collectAsState()
                         com.example.ui.components.AiConsentDialog(viewModel)
+                        DataRecoveryDialog(viewModel)
                         NotificationPermissionRequest(isLoggedIn)
 
                         // Notification shortcuts ("record today's symptoms", "open calendar").
@@ -221,9 +231,13 @@ class MainActivity : ComponentActivity() {
                             }
                         ) {
                             composable("login") {
+                                val healthVm: com.example.ui.viewmodel.HealthToolsViewModel = viewModel()
                                 LoginScreen(
-                                    onLoginSuccess = { name, cycleLength, lastPeriodDateStr ->
-                                        viewModel.login(name, cycleLength, lastPeriodDateStr)
+                                    lockManager = lockManager,
+                                    restoreViewModel = healthVm,
+                                    onRestored = { restartApp() },
+                                    onRegistered = { name, cycleLength, lastPeriodDateStr ->
+                                        viewModel.register(name, cycleLength, lastPeriodDateStr)
                                         navController.navigate("dashboard") {
                                             popUpTo("login") { inclusive = true }
                                         }
@@ -232,22 +246,32 @@ class MainActivity : ComponentActivity() {
                             }
                             composable("dashboard") {
                                 DashboardScreen(
+                                    // The partner-alert notification opens the "همراه" tab directly.
+                                    startTab = if (deepLink == "partner") HomeTab.PARTNER.ordinal else 0,
                                     viewModel = viewModel,
-                                    onNavigateToLog = { navController.navigate("log") },
-                                    onNavigateToCalendar = { navController.navigate("calendar") },
-                                    onNavigateToHealth = { navController.navigate("health") },
-                                    onNavigateToEducation = { navController.navigate("education") },
-                                    onNavigateToMood = { navController.navigate("mood") },
-                                    onNavigateToChat = { navController.navigate("chatbot") },
-                                    onNavigateToMeditation = { navController.navigate("meditation") },
-                                    onNavigateToReminders = { navController.navigate("reminders") },
-                                    onNavigateToAvatarGenerator = { navController.navigate("avatargenerator") },
-                                    onNavigateToHistory = { navController.navigate("history") },
-                                    onNavigateToCharts = { navController.navigate("charts") },
-                                    onLogout = {
-                                        viewModel.logout()
-                                        navController.navigate("login") {
-                                            popUpTo("dashboard") { inclusive = true }
+                                    onNavigateToLog = { navController.navigateOnce("log") },
+                                    onNavigateToCalendar = { navController.navigateOnce("calendar") },
+                                    onNavigateToHealth = { navController.navigateOnce("health") },
+                                    onNavigateToEducation = { navController.navigateOnce("education") },
+                                    onNavigateToMood = { navController.navigateOnce("mood") },
+                                    onNavigateToChat = { navController.navigateOnce("chatbot") },
+                                    onNavigateToMeditation = { navController.navigateOnce("meditation") },
+                                    onNavigateToReminders = { navController.navigateOnce("reminders") },
+                                    onNavigateToAvatarGenerator = { navController.navigateOnce("avatargenerator") },
+                                    onNavigateToHistory = { navController.navigateOnce("history") },
+                                    onNavigateToCharts = { navController.navigateOnce("charts") },
+                                    onNavigateToTools = { navController.navigateOnce("tools") },
+                                    onNavigateToPrivacy = { navController.navigateOnce("privacy") },
+                                    onLock = {
+                                        if (lockManager.isEnabled) {
+                                            isLocked = true
+                                        } else {
+                                            android.widget.Toast.makeText(
+                                                this@MainActivity,
+                                                "برای قفل کردن برنامه، ابتدا رمز قفل را فعال کنید.",
+                                                android.widget.Toast.LENGTH_LONG
+                                            ).show()
+                                            navController.navigateOnce("privacy")
                                         }
                                     }
                                 )
@@ -255,48 +279,48 @@ class MainActivity : ComponentActivity() {
                             composable("avatargenerator") {
                                 AvatarGeneratorScreen(
                                     viewModel = viewModel,
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable("reminders") {
                                 RemindersScreen(
                                     viewModel = viewModel,
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable("meditation") {
                                 MeditationMusicScreen(
                                     viewModel = viewModel,
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable("health") {
                                 com.example.ui.screens.HealthScreen(
                                     viewModel = viewModel,
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable("education") {
                                 com.example.ui.screens.EducationScreen(
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable("mood") {
                                 MoodScreen(
                                     viewModel = viewModel,
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable("chatbot") {
                                 ChatBotScreen(
                                     viewModel = viewModel,
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable("log") {
                                 LogScreen(
                                     viewModel = viewModel,
-                                    onBack = { navController.popBackStack() }
+                                    onBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable(
@@ -328,7 +352,7 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 com.example.ui.screens.CycleHistoryScreen(
                                     viewModel = viewModel,
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable(
@@ -360,32 +384,101 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 com.example.ui.screens.SymptomChartsScreen(
                                     viewModel = viewModel,
-                                    onNavigateBack = { navController.popBackStack() }
+                                    onNavigateBack = { navController.safePopBackStack() }
                                 )
                             }
                             composable("calendar") {
                                 CalendarScreen(
                                     viewModel = viewModel,
-                                    onBack = { navController.popBackStack() }
+                                    onBack = { navController.safePopBackStack() }
+                                )
+                            }
+                            composable("tools") {
+                                val healthVm: com.example.ui.viewmodel.HealthToolsViewModel = viewModel()
+                                com.example.ui.screens.HealthToolsScreen(
+                                    viewModel = healthVm,
+                                    onNavigateBack = { navController.safePopBackStack() }
+                                )
+                            }
+                            composable("privacy") {
+                                val healthVm: com.example.ui.viewmodel.HealthToolsViewModel = viewModel()
+                                com.example.ui.screens.PrivacySecurityScreen(
+                                    viewModel = healthVm,
+                                    onNavigateBack = { navController.safePopBackStack() },
+                                    onSecureScreenChanged = { applySecureFlag() },
+                                    onRestartApp = { restartApp() }
                                 )
                             }
                         }
                     }
+                    if (isLocked) {
+                        com.example.ui.screens.AppLockScreen(
+                            lock = lockManager,
+                            onUnlocked = { isLocked = false },
+                            onExit = { moveTaskToBack(true) }
+                        )
+                    }
+                  }
                 }
             }
         }
     }
 }
 
+    override fun onStop() {
+        super.onStop()
+        if (com.example.security.AppLockSession.skipNextLock) {
+            // A file picker opened by the app itself; do not lock behind the user's back.
+            com.example.security.AppLockSession.skipNextLock = false
+        } else if (!isChangingConfigurations && lockManager.isEnabled) {
+            isLocked = true
+        }
+        // Keep the home-screen widget in step with what was just logged.
+        com.example.tools.CycleWidgetProvider.requestUpdate(this)
+        // Refresh the encrypted automatic safety copy (at most every few hours).
+        if (com.example.data.preferences.UserPreferencesManager(this).isLoggedIn.value) {
+            com.example.tools.LocalSnapshots.takeInBackground(applicationContext)
+        }
+    }
+
+    /** FLAG_SECURE hides the app preview in "recent apps" and blocks screenshots. */
+    fun applySecureFlag() {
+        if (lockManager.secureScreen) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    /** Starts the app again from scratch (after restoring a backup or deleting all data). */
+    private fun restartApp() {
+        val intent = packageManager.getLaunchIntentForPackage(packageName)
+        if (intent != null) {
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        }
+        finish()
+    }
+
     /** Deletes all local data (only after explicit confirmation on the recovery screen). */
     @android.annotation.SuppressLint("ApplySharedPref") // must be on disk before the process restarts
     private fun resetAllLocalData() {
+        // A last safety copy before the reset (if the database can still be read).
+        try {
+            kotlinx.coroutines.runBlocking { com.example.tools.LocalSnapshots.takeIfDue(applicationContext, force = true) }
+        } catch (_: Throwable) {
+        }
         getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE).edit().clear().commit()
         getSharedPreferences(HanitaApplication.CRASH_PREFS, android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        getSharedPreferences(com.example.data.preferences.WellnessPrefs.NAME, android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        getSharedPreferences(com.example.security.AppLockManager.NAME, android.content.Context.MODE_PRIVATE).edit().clear().commit()
+        getSharedPreferences(com.example.tools.PartnerPrefs.NAME, android.content.Context.MODE_PRIVATE).edit().clear().commit()
         try {
+            com.example.data.AppDatabase.closeAndForget()
             deleteDatabase("hanita_database")
         } catch (_: Exception) {
         }
+        com.example.data.preferences.UserPreferencesManager(this).reload()
         val intent = packageManager.getLaunchIntentForPackage(packageName)
         if (intent != null) {
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -417,4 +510,39 @@ private fun NotificationPermissionRequest(isLoggedIn: Boolean) {
             launcher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+}
+
+/**
+ * Pops only when there is a screen to go back to. Tapping a back arrow twice quickly used to pop
+ * the dashboard too and leave an empty white screen.
+ */
+private fun androidx.navigation.NavController.safePopBackStack() {
+    if (previousBackStackEntry != null) popBackStack()
+}
+
+/** Ignores a second tap while the same screen is already on top (no duplicate screens). */
+private fun androidx.navigation.NavController.navigateOnce(route: String) {
+    if (currentDestination?.route == route) return
+    navigate(route) { launchSingleTop = true }
+}
+
+/**
+ * Shown when a registered user's database is found empty while an automatic encrypted copy still
+ * holds their data (for example after storage corruption). Nothing is restored without consent.
+ */
+@Composable
+private fun DataRecoveryDialog(viewModel: MahitaViewModel) {
+    val offer by viewModel.recoveryOffer.collectAsState()
+    val current = offer ?: return
+    AlertDialog(
+        onDismissRequest = { },
+        title = { Text("بازیابی اطلاعات شما") },
+        text = {
+            Text(
+                "به نظر می‌رسد اطلاعات ثبت‌شده شما روی این گوشی پیدا نمی‌شود، اما یک نسخه امن خودکار از تاریخ ${current.label} با ${current.records} مورد ثبت‌شده موجود است. آن را بازیابی کنیم؟"
+            )
+        },
+        confirmButton = { TextButton(onClick = { viewModel.acceptRecovery() }) { Text("بازیابی کن") } },
+        dismissButton = { TextButton(onClick = { viewModel.dismissRecovery() }) { Text("فعلاً نه") } }
+    )
 }

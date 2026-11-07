@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
@@ -79,6 +80,8 @@ fun InteractivePeriodCalendarWidget(
     var selectedFlow by remember { mutableStateOf("MEDIUM") }
     var cycleNotes by remember { mutableStateOf("") }
     var showNotesField by remember { mutableStateOf(false) }
+    var futureTapHint by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
 
     // Past recorded period dates set for display
     val recordedPeriodDates = remember(recordedLogs) {
@@ -224,7 +227,7 @@ fun InteractivePeriodCalendarWidget(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Next Month (In RTL, Next is Left button or right depending on chevron)
+                // Previous month: first child, so it sits on the right in the RTL layout.
                 IconButton(
                     onClick = {
                         var m = currentMonth.month - 1
@@ -236,8 +239,9 @@ fun InteractivePeriodCalendarWidget(
                         currentMonth = JalaliDate(y, m, 1)
                     }
                 ) {
+                    // AutoMirrored: in the RTL layout this arrow points outward (right), toward the past.
                     Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                         contentDescription = "ماه قبل",
                         tint = MaterialTheme.colorScheme.primary
                     )
@@ -291,7 +295,7 @@ fun InteractivePeriodCalendarWidget(
                     }
                 ) {
                     Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
                         contentDescription = "ماه بعد",
                         tint = MaterialTheme.colorScheme.primary
                     )
@@ -304,18 +308,19 @@ fun InteractivePeriodCalendarWidget(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceAround
+                    .padding(vertical = 4.dp)
             ) {
                 val daysOfWeek = listOf("ش", "ی", "د", "س", "چ", "پ", "ج")
-                daysOfWeek.forEach { day ->
+                daysOfWeek.forEachIndexed { index, day ->
                     Text(
                         text = day,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                        // Friday (the weekend) in the accent color, as in Persian wall calendars.
+                        color = if (index == 6) MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                         fontSize = 13.sp,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.width(36.dp)
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -336,13 +341,12 @@ fun InteractivePeriodCalendarWidget(
                 for (weekIndex in 0 until weeksCount) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         for (dayOfWeek in 0 until 7) {
                             val slotIndex = weekIndex * 7 + dayOfWeek
                             if (slotIndex < offset || slotIndex >= totalSlots) {
-                                Spacer(modifier = Modifier.size(42.dp))
+                                Spacer(modifier = Modifier.weight(1f).aspectRatio(1f))
                             } else {
                                 val dayNum = slotIndex - offset + 1
                                 val date = JalaliDate(currentMonth.year, currentMonth.month, dayNum)
@@ -362,15 +366,23 @@ fun InteractivePeriodCalendarWidget(
                                     }
                                 }
 
+                                val isFuture = date > todayJalali
                                 DayCellItem(
+                                    modifier = Modifier.weight(1f),
                                     date = date,
                                     dayNum = dayNum,
+                                    isFuture = isFuture,
                                     isToday = isToday,
                                     isStart = isStart,
                                     isEnd = isEnd,
                                     isInRange = isInSelectedRange,
                                     isPastRecorded = isPastRecorded,
                                     onDateClick = {
+                                        if (isFuture) {
+                                            futureTapHint = true
+                                            return@DayCellItem
+                                        }
+                                        futureTapHint = false
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         when (selectionTarget) {
                                             CalendarSelectionTarget.START_DATE -> {
@@ -411,6 +423,16 @@ fun InteractivePeriodCalendarWidget(
                 }
             }
 
+            if (futureTapHint) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "روزهای آینده را نمی‌توان به‌عنوان پریود ثبت کرد؛ پیش‌بینی‌ها در نمای ماهانه نشان داده می‌شوند.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    lineHeight = 17.sp
+                )
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
             // Quick Duration Preset Chips (when start date is selected)
@@ -428,19 +450,19 @@ fun InteractivePeriodCalendarWidget(
                 ) {
                     listOf(3, 4, 5, 6, 7).forEach { days ->
                         val isPresetActive = selectedDurationDays == days
+                        val presetEnd = selectedStartJalali!!.toLocalDate().plusDays((days - 1).toLong())
+                        val presetEnabled = !presetEnd.isAfter(todayLocalDate)
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(
                                     if (isPresetActive) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                    else MaterialTheme.colorScheme.primary.copy(alpha = if (presetEnabled) 0.08f else 0.03f)
                                 )
-                                .clickable {
+                                .clickable(enabled = presetEnabled) {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    val startLocal = selectedStartJalali!!.toLocalDate()
-                                    val newEndLocal = startLocal.plusDays((days - 1).toLong())
-                                    selectedEndJalali = JalaliCalendar.gregorianToJalali(newEndLocal)
+                                    selectedEndJalali = JalaliCalendar.gregorianToJalali(presetEnd)
                                 }
                                 .padding(vertical = 7.dp),
                             contentAlignment = Alignment.Center
@@ -449,7 +471,11 @@ fun InteractivePeriodCalendarWidget(
                                 text = "$days روز",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isPresetActive) Color.White else MaterialTheme.colorScheme.primary
+                                color = when {
+                                    isPresetActive -> Color.White
+                                    presetEnabled -> MaterialTheme.colorScheme.primary
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                }
                             )
                         }
                     }
@@ -497,7 +523,8 @@ fun InteractivePeriodCalendarWidget(
                         }
 
                         Icon(
-                            imageVector = Icons.Default.ArrowForward,
+                            // Start is on the right in RTL, so the arrow must point left toward the end.
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.outline,
                             modifier = Modifier.size(18.dp)
@@ -631,14 +658,8 @@ fun InteractivePeriodCalendarWidget(
                         if (onClearPeriod != null) {
                             OutlinedButton(
                                 onClick = {
-                                    val startJ = selectedStartJalali ?: return@OutlinedButton
-                                    val endJ = selectedEndJalali ?: startJ
-                                    val startLocal = startJ.toLocalDate()
-                                    val endLocal = endJ.toLocalDate()
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onClearPeriod(startLocal, endLocal)
-                                    selectedStartJalali = null
-                                    selectedEndJalali = null
+                                    confirmClear = true
                                 },
                                 colors = ButtonDefaults.outlinedButtonColors(
                                     contentColor = MaterialTheme.colorScheme.error
@@ -654,6 +675,32 @@ fun InteractivePeriodCalendarWidget(
             }
         }
     }
+
+    if (confirmClear && onClearPeriod != null) {
+        val startJ = selectedStartJalali
+        val endJ = selectedEndJalali ?: startJ
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("پاک کردن روزهای پریود؟", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "علامت پریود از ${startJ?.formatShort() ?: "-"} تا ${endJ?.formatShort() ?: "-"} برداشته می‌شود. علائم و یادداشت‌های این روزها حذف نمی‌شوند.",
+                    lineHeight = 22.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    if (startJ != null && endJ != null) {
+                        onClearPeriod(startJ.toLocalDate(), endJ.toLocalDate())
+                        selectedStartJalali = null
+                        selectedEndJalali = null
+                    }
+                }) { Text("پاک شود", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("انصراف") } }
+        )
+    }
 }
 
 /**
@@ -661,8 +708,10 @@ fun InteractivePeriodCalendarWidget(
  */
 @Composable
 private fun DayCellItem(
+    modifier: Modifier = Modifier,
     date: JalaliDate,
     dayNum: Int,
+    isFuture: Boolean,
     isToday: Boolean,
     isStart: Boolean,
     isEnd: Boolean,
@@ -685,6 +734,7 @@ private fun DayCellItem(
         isInRange -> MaterialTheme.colorScheme.primary
         isPastRecorded -> MaterialTheme.colorScheme.secondary
         isToday -> MaterialTheme.colorScheme.primary
+        isFuture -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
         else -> MaterialTheme.colorScheme.onSurface
     }
 
@@ -695,8 +745,9 @@ private fun DayCellItem(
     )
 
     Box(
-        modifier = Modifier
-            .size(42.dp)
+        modifier = modifier
+            .aspectRatio(1f)
+            .padding(2.dp)
             .scale(scale)
             .clip(
                 if (isEndpoint || (!isInRange && !isPastRecorded)) CircleShape

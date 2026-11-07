@@ -53,6 +53,7 @@ import com.example.ui.viewmodel.MahitaViewModel
 import com.example.utils.JalaliCalendar
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import com.example.domain.CyclePredictor
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
@@ -107,10 +108,9 @@ fun RemindersScreen(
         }
     }
 
-    val today: LocalDate = remember { LocalDate.now() }
-    val nextPeriodDate: LocalDate = remember(cycleInfo.predictedPeriodStart, averageCycleLength) {
-        cycleInfo.predictedPeriodStart ?: today.plusDays(averageCycleLength.toLong())
-    }
+    val today: LocalDate by viewModel.currentDate.collectAsState()
+    val prediction by viewModel.cyclePrediction.collectAsState()
+    val nextPeriodDate: LocalDate = cycleInfo.predictedPeriodStart
     val nextPeriodJalali: String = remember(nextPeriodDate) {
         JalaliCalendar.gregorianToJalali(nextPeriodDate).formatShort()
     }
@@ -118,17 +118,22 @@ fun RemindersScreen(
         ChronoUnit.DAYS.between(today, nextPeriodDate).toInt().coerceAtLeast(0)
     }
 
-    val ovulationDate: LocalDate = remember(nextPeriodDate) {
-        nextPeriodDate.minusDays(14)
+    // Same ovulation model as the calendar and the alarms (cycle day len-14, never before day 10),
+    // and always the next one: after this cycle's ovulation it moves to the next cycle instead of
+    // showing "0 days left".
+    val ovulationDate: LocalDate = remember(prediction, today, averageCycleLength) {
+        CyclePredictor.nextOvulation(prediction, today)
+            ?: today.plusDays((CyclePredictor.ovulationDay(averageCycleLength) - 1).toLong())
     }
     val ovulationJalali: String = remember(ovulationDate) {
         JalaliCalendar.gregorianToJalali(ovulationDate).formatShort()
     }
-    val fertileStartJalali: String = remember(ovulationDate) {
-        JalaliCalendar.gregorianToJalali(ovulationDate.minusDays(4)).formatShort()
+    val fertileWindow = remember(ovulationDate) { CyclePredictor.fertileWindow(ovulationDate) }
+    val fertileStartJalali: String = remember(fertileWindow) {
+        JalaliCalendar.gregorianToJalali(fertileWindow.first).formatShort()
     }
-    val fertileEndJalali: String = remember(ovulationDate) {
-        JalaliCalendar.gregorianToJalali(ovulationDate.plusDays(1)).formatShort()
+    val fertileEndJalali: String = remember(fertileWindow) {
+        JalaliCalendar.gregorianToJalali(fertileWindow.second).formatShort()
     }
     val daysUntilOvulation: Int = remember(ovulationDate, today) {
         ChronoUnit.DAYS.between(today, ovulationDate).toInt().coerceAtLeast(0)

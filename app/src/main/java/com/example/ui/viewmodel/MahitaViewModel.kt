@@ -7,12 +7,13 @@ import com.example.data.AppDatabase
 import com.example.data.model.DailyLog
 import com.example.data.model.MedicineReminder
 import com.example.data.repository.LogRepository
-import com.example.utils.FirestoreManager
 import com.example.utils.PeriodReminderHelper
 import com.example.utils.CycleNotificationHelper
 import com.example.utils.JalaliCalendar
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
@@ -26,12 +27,23 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     private val database = AppDatabase.getDatabase(application)
     private val repository = LogRepository(database.dailyLogDao(), database.physicalSymptomDao())
     private val prefsManager = com.example.data.preferences.UserPreferencesManager(application)
-    private val firestoreManager = FirestoreManager(database.dailyLogDao(), database.cycleRecordDao())
     private val analysisAdapter = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
         .adapter(CycleAnalysisResult::class.java)
 
-    /** True when the user is signed in with Firebase and cloud backup is possible. */
-    fun isCloudSyncAvailable(): Boolean = firestoreManager.isCloudAvailable()
+    /**
+     * Every change to a day's log is read-modify-write. Quick taps (water +, mood, medicine
+     * checkboxes) used to run in parallel and overwrite each other; one lock keeps them in order.
+     */
+    private val dayLogLock = Mutex()
+    private fun launchDayEdit(block: suspend () -> Unit) = viewModelScope.launch { dayLogLock.withLock { block() } }
+
+    /** Today's date that also changes at midnight while the app stays open. */
+    val currentDate: StateFlow<LocalDate> = flow {
+        while (true) {
+            emit(LocalDate.now())
+            kotlinx.coroutines.delay(30_000)
+        }
+    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LocalDate.now())
 
     // ---- AI data-sharing consent -------------------------------------------------------------
     val aiConsentGiven: StateFlow<Boolean> = prefsManager.aiConsentGiven
@@ -64,19 +76,13 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
 
     fun revokeAiConsent() = prefsManager.setAiConsentGiven(false)
 
-    private val _isSyncing = MutableStateFlow(false)
-    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
-
-    private val _syncStatusMessage = MutableStateFlow<String?>(null)
-    val syncStatusMessage: StateFlow<String?> = _syncStatusMessage.asStateFlow()
-
     val userName: StateFlow<String> = prefsManager.userName
     val userWeight: StateFlow<String> = prefsManager.userWeight
     val lastPeriodDate: StateFlow<String> = prefsManager.lastPeriodDate
     val userAvatar: StateFlow<String> = prefsManager.userAvatar
 
     fun incrementWater() {
-        viewModelScope.launch {
+        launchDayEdit {
             val todayStr = LocalDate.now().toString()
             val existing = repository.getLogByDate(todayStr)
             val current = existing?.waterIntake ?: 0
@@ -95,8 +101,7 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun decrementWater() {
-    
-        viewModelScope.launch {
+        launchDayEdit {
             val todayStr = LocalDate.now().toString()
             val existing = repository.getLogByDate(todayStr)
             val current = existing?.waterIntake ?: 0
@@ -118,7 +123,7 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
 
 
     fun logQuickMood(mood: String) {
-        viewModelScope.launch {
+        launchDayEdit {
             val todayStr = LocalDate.now().toString()
             val existing = repository.getLogByDate(todayStr)
             if (existing != null) {
@@ -157,7 +162,9 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
-    val waterGlasses: StateFlow<Int> = allLogs.map { logs -> logs.find { it.dateStr == LocalDate.now().toString() }?.waterIntake ?: 0 }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val waterGlasses: StateFlow<Int> = combine(repository.allLogs, currentDate) { logs, today ->
+        logs.find { it.dateStr == today.toString() }?.waterIntake ?: 0
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     val allPhysicalSymptoms: StateFlow<List<com.example.data.model.PhysicalSymptomLog>> = (repository.allPhysicalSymptoms ?: kotlinx.coroutines.flow.flowOf(emptyList())).stateIn(
         scope = viewModelScope,
@@ -169,11 +176,37 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
         return repository.getPhysicalSymptomsForDate(dateStr)
     }
 
+    suspend fun getLogForDate(dateStr: String): DailyLog? = repository.getLogByDate(dateStr)
+
     suspend fun getPhysicalSymptomsListForDate(dateStr: String): List<com.example.data.model.PhysicalSymptomLog> {
         return repository.getPhysicalSymptomsListForDate(dateStr)
     }
 
-    val allCycleRecords: StateFlow<List<com.example.data.model.CycleRecord>> = database.cycleRecordDao().getAllCycleRecords().stateIn(
+    /**
+     * Every period, newest first, built from the bleeding days that the forecasts use. Periods
+     * logged from the calendar, the daily log or the first setup used to be missing from the
+     * history (only the cycle_records table was shown) and cleared days left "ghost" periods.
+     * A saved record still supplies its id and notes when it overlaps a period.
+     */
+    val allCycleRecords: StateFlow<List<com.example.data.model.CycleRecord>> = combine(
+        repository.periodDays,
+        database.cycleRecordDao().getAllCycleRecords()
+    ) { periodLogs, saved ->
+        val days = periodLogs.mapNotNull { runCatching { LocalDate.parse(it.dateStr) }.getOrNull() }
+        CyclePredictor.periodEpisodes(days).map { (start, end) ->
+            val match = saved.firstOrNull { r ->
+                val rs = runCatching { LocalDate.parse(r.startDate) }.getOrNull() ?: return@firstOrNull false
+                val re = runCatching { LocalDate.parse(r.endDate) }.getOrNull() ?: rs
+                !rs.isAfter(end) && !re.isBefore(start)
+            }
+            com.example.data.model.CycleRecord(
+                id = match?.id ?: "cycle_$start",
+                startDate = start.toString(),
+                endDate = end.toString(),
+                notes = match?.notes ?: ""
+            )
+        }.sortedByDescending { it.startDate }
+    }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -182,20 +215,12 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     fun updateCycleRecord(cycleRecord: com.example.data.model.CycleRecord) {
         viewModelScope.launch {
             database.cycleRecordDao().insertCycleRecord(cycleRecord)
-            val name = userName.value
-            if (name.isNotBlank()) {
-                firestoreManager.uploadCycleRecord(cycleRecord)
-            }
         }
     }
 
     fun deleteCycleRecord(cycleId: String) {
         viewModelScope.launch {
             database.cycleRecordDao().deleteCycleRecord(cycleId)
-            val name = userName.value
-            if (name.isNotBlank()) {
-                firestoreManager.deleteCycleRecord(cycleId)
-            }
         }
     }
 
@@ -210,15 +235,32 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     private val _isFetchingAiTip = MutableStateFlow(false)
     val isFetchingAiTip: StateFlow<Boolean> = _isFetchingAiTip.asStateFlow()
 
+    private val _aiTipError = MutableStateFlow<String?>(null)
+    /** Why the last tip request failed; the button stays available to try again. */
+    val aiTipError: StateFlow<String?> = _aiTipError.asStateFlow()
+    /** The tip belongs to one day and phase; a new day or phase allows a fresh tip. */
+    private var aiTipKey: String? = null
+
     fun fetchAiDailyTip(phase: String, currentDay: Int, avgCycleLength: Float) {
-        if (_aiDailyTip.value != null || _isFetchingAiTip.value) return // Don't fetch if we already have it or are fetching
-        _isFetchingAiTip.value = true
-        viewModelScope.launch {
-            _aiDailyTip.value = when (val result = HanitaAi.cycleTips(phase, currentDay, avgCycleLength.toInt())) {
-                is HanitaAi.AiResult.Success -> result.value
-                is HanitaAi.AiResult.Failure -> result.userMessage
+        val key = "${LocalDate.now()}|$phase"
+        if (aiTipKey != key) {
+            _aiDailyTip.value = null
+            aiTipKey = key
+        }
+        if (_aiDailyTip.value != null || _isFetchingAiTip.value) return
+        // The cycle phase and day are sent to the AI service, so ask first (like the analysis).
+        requireAiConsent(
+            onDeclined = { _aiTipError.value = "بدون اجازه شما هیچ داده‌ای برای هوش مصنوعی ارسال نمی‌شود." }
+        ) {
+            _isFetchingAiTip.value = true
+            _aiTipError.value = null
+            viewModelScope.launch {
+                when (val result = HanitaAi.cycleTips(phase, currentDay, avgCycleLength.toInt())) {
+                    is HanitaAi.AiResult.Success -> _aiDailyTip.value = result.value
+                    is HanitaAi.AiResult.Failure -> _aiTipError.value = result.userMessage
+                }
+                _isFetchingAiTip.value = false
             }
-            _isFetchingAiTip.value = false
         }
     }
 
@@ -254,8 +296,7 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PredictionInfo())
 
-    val cycleInfo: StateFlow<CycleInfo> = combine(repository.periodDays, prediction) { periodLogs, p ->
-        val today = LocalDate.now()
+    val cycleInfo: StateFlow<CycleInfo> = combine(repository.periodDays, prediction, currentDate) { periodLogs, p, today ->
         val status = CyclePredictor.dayStatus(
             date = today,
             prediction = p,
@@ -273,6 +314,12 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
             phase = status.phase
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CycleInfo())
+
+    /** A newer automatic copy that holds data while the database is empty (e.g. it was damaged). */
+    data class RecoveryOffer(val snapshot: com.example.tools.LocalSnapshots.Snapshot, val label: String, val records: Int)
+
+    private val _recoveryOffer = MutableStateFlow<RecoveryOffer?>(null)
+    val recoveryOffer: StateFlow<RecoveryOffer?> = _recoveryOffer.asStateFlow()
 
     init {
         // Keep every reminder in sync with the real data and the user's settings.
@@ -302,53 +349,82 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
                 .distinctUntilChanged()
                 .collect { (p, settings) ->
                     ReminderScheduler.schedule(getApplication(), p, settings)
+                    // Breast-exam reminder follows the cycle; the home-screen widget shows it too.
+                    com.example.tools.WellnessReminders.scheduleAll(getApplication(), p.lastPeriodStart, p.averageCycleLength)
+                    com.example.tools.CycleWidgetProvider.requestUpdate(getApplication())
                 }
         }
 
-        // Automatic cloud sync only for a user signed in with Firebase (never by display name).
+        checkForLostData()
+    }
+
+    /**
+     * Creates the local account on this phone at first launch. The first day of the last period is
+     * added to whatever is already stored for that day (nothing that was logged before is erased).
+     */
+    fun register(name: String, cycleLength: Int = 28, lastPeriodDateStr: String? = null) {
+        prefsManager.register(name, cycleLength)
+        if (lastPeriodDateStr == null) return
         viewModelScope.launch {
-            isLoggedIn.collect { loggedIn ->
-                if (loggedIn && firestoreManager.isCloudAvailable()) {
-                    syncWithCloud()
+            val existing = repository.getLogByDate(lastPeriodDateStr)
+            val log = existing?.copy(
+                periodFlow = if (existing.periodFlow == "NONE") "MEDIUM" else existing.periodFlow
+            ) ?: DailyLog(
+                dateStr = lastPeriodDateStr,
+                periodFlow = "MEDIUM",
+                symptoms = "",
+                moods = "",
+                notes = "ثبت اطلاعات اولیه دوره من در هانیتا"
+            )
+            repository.insertLog(log)
+            prefsManager.setLastPeriodDate(lastPeriodDateStr)
+        }
+    }
+
+    fun setUserName(name: String) = prefsManager.setUserName(name)
+
+    // ---- Data-loss protection ----------------------------------------------------------------
+
+    private fun checkForLostData() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                if (!prefsManager.isLoggedIn.value) return@launch
+                val hasData = database.dailyLogDao().getAllLogsList().isNotEmpty() ||
+                    database.cycleRecordDao().getAllCycleRecordsList().isNotEmpty()
+                if (hasData) return@launch
+                val app = getApplication<Application>()
+                // The fullest copy first (newest among equals); it must still be readable on this phone.
+                val candidates = com.example.tools.LocalSnapshots.list(app)
+                    .filter { it.records > 0 }
+                    .sortedWith(compareByDescending<com.example.tools.LocalSnapshots.Snapshot> { it.records }.thenByDescending { it.createdAt })
+                for (snap in candidates) {
+                    val root = com.example.tools.LocalSnapshots.read(snap) ?: continue
+                    val count = com.example.tools.LocalSnapshots.recordCount(root)
+                    if (count > 0) {
+                        _recoveryOffer.value = RecoveryOffer(snap, com.example.tools.LocalSnapshots.formatDate(snap), count)
+                        return@launch
+                    }
                 }
+            } catch (e: Exception) {
+                android.util.Log.w("MahitaViewModel", "Lost-data check failed: ${e.javaClass.simpleName}")
             }
         }
     }
 
-    fun login(name: String, cycleLength: Int = 28, lastPeriodDateStr: String? = null) {
-        prefsManager.login(name, cycleLength)
+    fun acceptRecovery() {
+        val offer = _recoveryOffer.value ?: return
+        _recoveryOffer.value = null
         viewModelScope.launch {
-            if (lastPeriodDateStr != null) {
-                val log = DailyLog(
-                    dateStr = lastPeriodDateStr,
-                    periodFlow = "MEDIUM",
-                    symptoms = "",
-                    moods = "",
-                    notes = "ثبت اطلاعات اولیه دوره من در هانیتا"
-                )
-                repository.insertLog(log)
-                prefsManager.setLastPeriodDate(lastPeriodDateStr)
+            try {
+                com.example.tools.LocalSnapshots.restore(getApplication(), offer.snapshot)
+            } catch (e: Exception) {
+                android.util.Log.w("MahitaViewModel", "Recovery failed: ${e.javaClass.simpleName}")
             }
-            if (firestoreManager.isCloudAvailable()) syncWithCloud()
         }
     }
 
-    fun logout() {
-        prefsManager.logout()
-        firestoreManager.signOut()
-        PeriodReminderHelper.cancelReminder(getApplication())
-        CycleNotificationHelper.cancelAll(getApplication())
-        com.example.utils.PhaseReminderHelper.cancelAllPhaseReminders(getApplication())
-    }
-
-    /** Removes the user's copy in the cloud (local data on this phone is kept). */
-    fun deleteCloudData() {
-        viewModelScope.launch {
-            _isSyncing.value = true
-            val ok = firestoreManager.deleteAllCloudData()
-            _syncStatusMessage.value = if (ok) "نسخه ابری اطلاعات شما حذف شد." else "حذف نسخه ابری انجام نشد. لطفاً دوباره تلاش کنید."
-            _isSyncing.value = false
-        }
+    fun dismissRecovery() {
+        _recoveryOffer.value = null
     }
 
     fun setNotificationEnabled(enabled: Boolean) {
@@ -393,10 +469,8 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
 
     fun sendTestOvulationNotification() {
         val today = LocalDate.now()
-        val cycle = cycleInfo.value
-        val cycleLength = averageCycleLength.value
-        val nextPeriod = cycle.predictedPeriodStart ?: today.plusDays(cycleLength.toLong())
-        val ovulationDate = nextPeriod.minusDays(14)
+        val ovulationDate = CyclePredictor.nextOvulation(prediction.value, today)
+            ?: today.plusDays((CyclePredictor.ovulationDay(averageCycleLength.value) - 1).toLong())
         val jalaliOvulation = JalaliCalendar.gregorianToJalali(ovulationDate).formatShort()
         val days = ovulationDaysBefore.value
         CycleNotificationHelper.sendImmediateNotification(
@@ -442,44 +516,38 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     fun setWeight(weight: String) {
         viewModelScope.launch {
             prefsManager.setUserWeight(weight)
-            val uName = userName.value
-            if (uName.isNotBlank()) {
-                firestoreManager.uploadProfile(averageCycleLength.value, weight)
-            }
         }
     }
 
     fun updateCycleSettings(startDate: String, duration: Int) {
-        viewModelScope.launch {
+        launchDayEdit {
             prefsManager.setLastPeriodDate(startDate)
             prefsManager.setAverageCycleLength(duration)
             
             if (startDate.isNotBlank()) {
-                val log = DailyLog(
+                // Mark the day as a bleeding day without wiping what was already logged for it
+                // (symptoms, moods, notes, medicines and water used to be erased here).
+                val existing = repository.getLogByDate(startDate)
+                val log = existing?.copy(
+                    periodFlow = if (existing.periodFlow == "NONE") "MEDIUM" else existing.periodFlow
+                ) ?: DailyLog(
                     dateStr = startDate,
                     periodFlow = "MEDIUM",
                     symptoms = "",
                     moods = "",
-                    notes = "تغییر تاریخ شروع سیکل قاعدگی"
+                    notes = ""
                 )
                 repository.insertLog(log)
-                
-                val uName = userName.value
-                if (uName.isNotBlank()) {
-                    firestoreManager.uploadLog(log)
-                    firestoreManager.uploadProfile(duration, null)
-                }
-            } else {
-                val uName = userName.value
-                if (uName.isNotBlank()) {
-                    firestoreManager.uploadProfile(duration, null)
-                }
             }
         }
     }
 
     fun savePeriodRange(startDate: LocalDate, endDate: LocalDate, flow: String = "MEDIUM", notes: String = "") {
-        viewModelScope.launch {
+        launchDayEdit { savePeriodRangeNow(startDate, endDate, flow, notes) }
+    }
+
+    private suspend fun savePeriodRangeNow(startDate: LocalDate, endDate: LocalDate, flow: String, notes: String) {
+        run {
             val start = if (startDate.isAfter(endDate)) endDate else startDate
             val end = if (startDate.isAfter(endDate)) startDate else endDate
 
@@ -510,30 +578,29 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
                 curr = curr.plusDays(1)
             }
 
-            val avgCycle = averageCycleLength.value
             prefsManager.setLastPeriodDate(start.toString())
-
-            val uName = userName.value
-            if (uName.isNotBlank()) {
-                firestoreManager.uploadCycleRecord(record)
-                firestoreManager.uploadProfile(avgCycle, null)
-            }
         }
     }
 
     fun clearPeriodRange(startDate: LocalDate, endDate: LocalDate) {
-        viewModelScope.launch {
+        launchDayEdit { clearPeriodRangeNow(startDate, endDate) }
+    }
+
+    private suspend fun clearPeriodRangeNow(startDate: LocalDate, endDate: LocalDate) {
+        run {
             val start = if (startDate.isAfter(endDate)) endDate else startDate
             val end = if (startDate.isAfter(endDate)) startDate else endDate
 
-            database.cycleRecordDao().deleteCycleRecord("cycle_${start}")
+            val recordId = "cycle_${start}"
+            database.cycleRecordDao().deleteCycleRecord(recordId)
 
             var curr = start
             while (!curr.isAfter(end)) {
                 val dateStr = curr.toString()
                 val existing = repository.getLogByDate(dateStr)
-                if (existing != null) {
-                    repository.insertLog(existing.copy(periodFlow = "NONE"))
+                if (existing != null && existing.periodFlow != "NONE") {
+                    val cleared = existing.copy(periodFlow = "NONE")
+                    repository.insertLog(cleared)
                 }
                 curr = curr.plusDays(1)
             }
@@ -550,7 +617,7 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
         flow: String,
         notes: String
     ) {
-        viewModelScope.launch {
+        launchDayEdit {
             var actualOldRecordId = oldRecordId
             var actualOldEndDate = oldEndDate
 
@@ -567,10 +634,6 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
             if (oldStartDate != null && actualOldEndDate != null && (oldStartDate != newStartDate || actualOldEndDate != newEndDate)) {
                 if (actualOldRecordId != null && actualOldRecordId != "cycle_${newStartDate}") {
                     database.cycleRecordDao().deleteCycleRecord(actualOldRecordId)
-                    val name = userName.value
-                    if (name.isNotBlank()) {
-                        firestoreManager.deleteCycleRecord(actualOldRecordId)
-                    }
                 }
                 var oldCurr: LocalDate = oldStartDate
                 val safeOldEnd: LocalDate = actualOldEndDate
@@ -586,7 +649,7 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
-            savePeriodRange(newStartDate, newEndDate, flow, notes)
+            savePeriodRangeNow(newStartDate, newEndDate, flow, notes)
 
             if (cycleLength in 21..45) {
                 prefsManager.setAverageCycleLength(cycleLength)
@@ -595,12 +658,12 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteFullCycleRecord(record: com.example.data.model.CycleRecord) {
-        viewModelScope.launch {
-            deleteCycleRecord(record.id)
+        launchDayEdit {
+            database.cycleRecordDao().deleteCycleRecord(record.id)
             val sDate = runCatching { LocalDate.parse(record.startDate) }.getOrNull()
             val eDate = runCatching { LocalDate.parse(record.endDate) }.getOrNull() ?: sDate
             if (sDate != null && eDate != null) {
-                clearPeriodRange(sDate, eDate)
+                clearPeriodRangeNow(sDate, eDate)
             }
         }
     }
@@ -634,32 +697,6 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
         prefsManager.removeCustomMoodSymptom(symptom)
     }
 
-
-    fun syncWithCloud() {
-        if (_isSyncing.value) return
-        if (!firestoreManager.isCloudAvailable()) {
-            _syncStatusMessage.value = "برای پشتیبان‌گیری ابری ابتدا با حساب گوگل وارد شوید. اطلاعات شما فعلاً فقط روی همین گوشی ذخیره است."
-            return
-        }
-        viewModelScope.launch {
-            _isSyncing.value = true
-            _syncStatusMessage.value = "در حال همگام‌سازی امن..."
-            try {
-                val result = firestoreManager.syncAll()
-                _syncStatusMessage.value = when {
-                    !result.success -> "خطا در همگام‌سازی. اتصال اینترنت را بررسی کنید."
-                    result.downloaded == 0 && result.uploaded == 0 -> "داده‌ها از قبل همگام هستند"
-                    else -> "همگام‌سازی ابری با موفقیت انجام شد ✨"
-                }
-            } finally {
-                _isSyncing.value = false
-            }
-        }
-    }
-
-    fun clearSyncStatusMessage() {
-        _syncStatusMessage.value = null
-    }
 
     private val _analysisState = MutableStateFlow<AnalysisUiState>(AnalysisUiState.Idle)
     val analysisState: StateFlow<AnalysisUiState> = _analysisState.asStateFlow()
@@ -806,8 +843,10 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleMedicationTaken(dateStr: String, medId: String, taken: Boolean) {
-        viewModelScope.launch {
-            val existingLog = allLogs.value.find { it.dateStr == dateStr }
+        launchDayEdit {
+            // Read the day from the database: the cached list can be empty when no screen observes
+            // it, and writing a fresh row then erased the day's period, symptoms and moods.
+            val existingLog = repository.getLogByDate(dateStr)
             val currentMeds = existingLog?.takenMeds?.split(",")?.filter { it.isNotBlank() }?.toMutableList() ?: mutableListOf()
             if (taken) {
                 if (!currentMeds.contains(medId)) currentMeds.add(medId)
@@ -840,9 +879,16 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
         emoji: String = "",
         waterIntake: Int = 0,
         bbt: Float? = null,
-        weight: Float? = null
+        weight: Float? = null,
+        /** true when the caller sends the full state of the day (form editors): empty moods/notes clear them. */
+        replaceDayState: Boolean = false,
+        /**
+         * true when the form shows water, temperature and weight: the values are saved as they are,
+         * so lowering water to 0 or clearing a temperature sticks (it used to be ignored).
+         */
+        measurementsFromForm: Boolean = false
     ) {
-        viewModelScope.launch {
+        launchDayEdit {
             // 1. Delete previous physical symptoms for this date in Room to replace with updated state
             repository.deletePhysicalSymptomsForDate(dateStr)
             // 2. Insert new physical symptoms in Room database
@@ -856,30 +902,20 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
                 dateStr = dateStr,
                 periodFlow = if (flow.isNotBlank()) flow else (existing?.periodFlow ?: "NONE"),
                 symptoms = symptomNames,
-                moods = if (moods.isNotEmpty()) moods.joinToString(",") else (existing?.moods ?: ""),
-                notes = if (overallNotes.isNotBlank()) overallNotes else (existing?.notes ?: ""),
-                emoji = if (emoji.isNotBlank()) emoji else (existing?.emoji ?: ""),
+                moods = if (moods.isNotEmpty() || replaceDayState) moods.joinToString(",") else (existing?.moods ?: ""),
+                notes = if (overallNotes.isNotBlank() || replaceDayState) overallNotes else (existing?.notes ?: ""),
+                emoji = if (emoji.isNotBlank() || replaceDayState) emoji else (existing?.emoji ?: ""),
                 takenMeds = existing?.takenMeds ?: "",
-                waterIntake = if (waterIntake != 0) waterIntake else (existing?.waterIntake ?: 0),
-                bbt = bbt ?: existing?.bbt,
-                weight = weight ?: existing?.weight
+                waterIntake = if (measurementsFromForm || waterIntake != 0) waterIntake else (existing?.waterIntake ?: 0),
+                bbt = if (measurementsFromForm) bbt else bbt ?: existing?.bbt,
+                weight = if (measurementsFromForm) weight else weight ?: existing?.weight
             )
             repository.insertLog(log)
-
-            // 4. Upload to Firestore if logged in
-            val name = userName.value
-            if (name.isNotBlank()) {
-                try {
-                    firestoreManager.uploadLog(log)
-                } catch (e: Exception) {
-                    android.util.Log.e("MahitaViewModel", "Error uploading log to firestore: ${e.message}")
-                }
-            }
         }
     }
 
     fun deletePhysicalSymptomById(id: Long, dateStr: String? = null) {
-        viewModelScope.launch {
+        launchDayEdit {
             repository.deletePhysicalSymptomById(id)
             if (dateStr != null) {
                 // Refresh symptoms in DailyLog
@@ -895,8 +931,9 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun saveQuickLog(dateStr: String, mood: String, energy: String, sleep: String, pain: String) {
-        viewModelScope.launch {
+        launchDayEdit {
             val existing = repository.getLogByDate(dateStr)
+            val alreadyLogged = repository.getPhysicalSymptomsListForDate(dateStr).map { it.symptomName }.toSet()
             
             // Collect new moods/symptoms
             val currentMoods = existing?.moods?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toMutableSet() ?: mutableSetOf()
@@ -907,8 +944,8 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
             val currentSymptoms = existing?.symptoms?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toMutableSet() ?: mutableSetOf()
             if (pain.isNotBlank() && pain != "ندارم") {
                 currentSymptoms.add(pain)
-                // Also add to physical logs
-                repository.insertPhysicalSymptoms(listOf(
+                // Also add to physical logs (once: saving again used to add the same symptom twice)
+                if (pain !in alreadyLogged) repository.insertPhysicalSymptoms(listOf(
                     com.example.data.model.PhysicalSymptomLog(
                         dateStr = dateStr,
                         symptomName = pain,
@@ -946,54 +983,50 @@ class MahitaViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun saveLog(dateStr: String, flow: String, symptoms: List<String>, moods: List<String>, notes: String, emoji: String = "", takenMeds: String = "") {
+    // ---- Sleep and steps of today (health screen); stored per day in the health_entries table ----
 
+    private val todayHealthEntries: Flow<List<com.example.data.model.HealthEntry>> =
+        combine(database.healthEntryDao().getAll(), currentDate) { list, today -> list.filter { it.dateStr == today.toString() } }
+
+    /** Today's sleep in hours, or null when nothing was saved yet. */
+    val todaySleepHours: StateFlow<Float?> = todayHealthEntries
+        .map { list -> list.firstOrNull { it.type == com.example.data.model.HealthEntryType.SLEEP }?.num1?.let { it / 60f } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val todaySteps: StateFlow<Int?> = todayHealthEntries
+        .map { list -> list.firstOrNull { it.type == com.example.data.model.HealthEntryType.STEPS }?.num1 }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** Saves today's sleep and steps (one value per day; a new save replaces the old one). */
+    fun saveTodayActivity(sleepHours: Float?, steps: Int?) {
         viewModelScope.launch {
-            val existing = repository.getLogByDate(dateStr)
-            val log = DailyLog(
-                dateStr = dateStr,
-                periodFlow = flow,
-                symptoms = symptoms.joinToString(","),
-                moods = moods.joinToString(","),
-                notes = notes,
-                emoji = emoji,
-                takenMeds = takenMeds,
-                waterIntake = existing?.waterIntake ?: 0
-            )
-            repository.insertLog(log)
-
-            // Also synchronize with physical_symptom_logs table in Room
-            if (symptoms.isNotEmpty()) {
-                repository.deletePhysicalSymptomsForDate(dateStr)
-                val physicalLogs = symptoms.map { symName ->
-                    val category = when {
-                        symName in listOf("سردرد", "خستگی", "سرگیجه", "بی‌خوابی", "عدم تمرکز") -> "سر و اعصاب"
-                        symName in listOf("درد شکم", "کمردرد", "نفخ", "حساسیت سینه") -> "شکم و لگن"
-                        symName in listOf("حالت تهوع", "هوس غذایی", "بی‌اشتهایی") -> "گوارش و متابولیسم"
-                        else -> "عضلات و فیزیک"
-                    }
-                    com.example.data.model.PhysicalSymptomLog(
-                        dateStr = dateStr,
-                        symptomName = symName,
-                        severity = "MODERATE",
-                        severityScore = 2,
-                        category = category,
-                        notes = notes
+            val today = LocalDate.now().toString()
+            val dao = database.healthEntryDao()
+            if (sleepHours != null) {
+                dao.deleteForDay(today, com.example.data.model.HealthEntryType.SLEEP)
+                dao.insert(
+                    com.example.data.model.HealthEntry(
+                        dateStr = today,
+                        type = com.example.data.model.HealthEntryType.SLEEP,
+                        num1 = (sleepHours.coerceIn(0f, 24f) * 60).toInt()
                     )
-                }
-                repository.insertPhysicalSymptoms(physicalLogs)
+                )
             }
-            
-            // Sync this single log immediately to Firestore
-            val name = userName.value
-            if (name.isNotBlank()) {
-                firestoreManager.uploadLog(log)
+            if (steps != null) {
+                dao.deleteForDay(today, com.example.data.model.HealthEntryType.STEPS)
+                dao.insert(
+                    com.example.data.model.HealthEntry(
+                        dateStr = today,
+                        type = com.example.data.model.HealthEntryType.STEPS,
+                        num1 = steps.coerceIn(0, 200_000)
+                    )
+                )
             }
         }
     }
 
     fun setWaterGlasses(count: Int) {
-        viewModelScope.launch {
+        launchDayEdit {
             val todayStr = LocalDate.now().toString()
             val existing = repository.getLogByDate(todayStr)
             val newLog = existing?.copy(waterIntake = count) ?: DailyLog(

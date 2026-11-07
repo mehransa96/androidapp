@@ -81,9 +81,20 @@ fun MoodScreen(
 
     val context = LocalContext.current
     val mediaPlayer = remember { MediaPlayer() }
+    // Pause (and show "paused") when a call or another app takes the sound.
+    val playbackFocus = remember {
+        com.example.utils.PlaybackFocus(context) {
+            try {
+                if (mediaPlayer.isPlaying) mediaPlayer.pause()
+            } catch (_: Exception) {
+            }
+            isPlaying = false
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
+            playbackFocus.abandon()
             try {
                 if (mediaPlayer.isPlaying) mediaPlayer.stop()
                 mediaPlayer.release()
@@ -97,11 +108,13 @@ fun MoodScreen(
     fun startTrackPlayback(track: CycleMusic) {
         try {
             mediaPlayer.reset()
+            mediaPlayer.setAudioAttributes(com.example.utils.PlaybackFocus.ATTRIBUTES)
             val afd: AssetFileDescriptor = context.resources.openRawResourceFd(track.resId)
             mediaPlayer.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
             afd.close()
             mediaPlayer.isLooping = isLooping
             mediaPlayer.prepare()
+            playbackFocus.request()
             mediaPlayer.start()
             isPlaying = true
             currentPositionSeconds = 0
@@ -121,6 +134,7 @@ fun MoodScreen(
                 isPlaying = false
             } else {
                 try {
+                    playbackFocus.request()
                     mediaPlayer.start()
                     isPlaying = true
                 } catch (e: Exception) {

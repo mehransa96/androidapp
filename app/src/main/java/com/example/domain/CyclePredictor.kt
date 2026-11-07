@@ -80,6 +80,42 @@ object CyclePredictor {
         return starts
     }
 
+    /**
+     * Groups individual bleeding days into periods (first and last day of each), oldest first.
+     * The same grouping rule as [periodStarts], so history and forecasts always agree.
+     */
+    fun periodEpisodes(bleedingDays: Collection<LocalDate>): List<Pair<LocalDate, LocalDate>> {
+        val sorted = bleedingDays.distinct().sorted()
+        if (sorted.isEmpty()) return emptyList()
+        val episodes = mutableListOf<Pair<LocalDate, LocalDate>>()
+        var runStart = sorted.first()
+        var prev = sorted.first()
+        for (i in 1 until sorted.size) {
+            val day = sorted[i]
+            if (ChronoUnit.DAYS.between(prev, day) > NEW_PERIOD_GAP_DAYS) {
+                episodes.add(runStart to prev)
+                runStart = day
+            }
+            prev = day
+        }
+        episodes.add(runStart to prev)
+        return episodes
+    }
+
+    /**
+     * The next ovulation day that is today or later, using the same model as the calendar and the
+     * reminders (ovulation = cycle day [ovulationDay]). Null when no period was logged yet.
+     */
+    fun nextOvulation(prediction: Prediction, today: LocalDate): LocalDate? {
+        val lastStart = prediction.lastPeriodStart ?: return null
+        val day = ovulationDay(prediction.averageCycleLength)
+        return nextOccurrenceOfCycleDay(lastStart, prediction.averageCycleLength, day, today.minusDays(1))
+    }
+
+    /** Fertile window around an ovulation day: 5 days before up to 1 day after (same as [dayStatus]). */
+    fun fertileWindow(ovulation: LocalDate): Pair<LocalDate, LocalDate> =
+        ovulation.minusDays(5) to ovulation.plusDays(1)
+
     /** Average number of bleeding days per period, from real data (fallback 5). */
     fun averagePeriodLength(bleedingDays: Collection<LocalDate>): Int {
         val sorted = bleedingDays.distinct().sorted()

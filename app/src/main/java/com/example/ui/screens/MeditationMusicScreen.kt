@@ -56,28 +56,28 @@ fun MeditationMusicScreen(
     val categories = listOf(
         "meditation" to "🧘 مدیتیشن عمیق",
         "nature" to "🌲 آوای طبیعت",
-        "healing" to "✨ فرکانس‌ درمانی",
-        "lofi" to "🎧 بیت‌های لوفای"
+        "healing" to "✨ تُن‌های آرام‌بخش",
+        "lofi" to "🎧 لوفای و آکوستیک"
     )
 
     val tracks = remember {
         listOf(
-            // Meditation
-            MeditationTrack("m1", "مدیتیشن ذهن‌آگاهی برای تسکین PMS", "دکتر آریان‌مهر", "meditation", 24, R.raw.luteal_pink_noise_zen),
-            MeditationTrack("m2", "رهاسازی گرفتگی‌های عضلانی (دردهای شکمی)", "کلینیک یوگای آرامش", "meditation", 24, R.raw.period_piano_calm),
-            MeditationTrack("m3", "تجسم خلاق برای تعادل هورمونی", "تراپیست هانیتا", "meditation", 24, R.raw.follicular_positive_vibes),
+            // Meditation (guided by sound: breathing cues, slow tempo, soft timbres)
+            MeditationTrack("m1", "تنفس ۴-۷-۸ با نویز صورتی (ضد اضطراب PMS)", "استودیو هانیتا • تنفس هدایت‌شده", "meditation", 76, R.raw.luteal_pink_noise_zen),
+            MeditationTrack("m2", "رهاسازی عضلانی با پیانوی آرام (دردهای شکمی)", "استودیو هانیتا • پیانو ۶۰ BPM", "meditation", 64, R.raw.period_piano_calm),
+            MeditationTrack("m3", "تجسم آرام با کالیمبا", "استودیو هانیتا • کالیمبا و پد", "meditation", 60, R.raw.follicular_positive_vibes),
             // Nature
-            MeditationTrack("n1", "آوای جنگل و نسیم ملایم بهاری", "مسترینگ طبیعت", "nature", 24, R.raw.follicular_gentle_breeze),
-            MeditationTrack("n2", "طنین باران شبانه و امواج آرامش", "طبیعت آرام", "nature", 24, R.raw.period_rain_nature),
-            MeditationTrack("n3", "درخشش آفتاب و سرزندگی تابستان", "آواهای کیهانی", "nature", 24, R.raw.ovulation_sunshine_groove),
-            // Healing
-            MeditationTrack("h1", "فرکانس ۵۲۸ هرتز (ترمیم بافت‌ها)", "آکوستیک هانیتا", "healing", 24, R.raw.period_frequency_528),
-            MeditationTrack("h2", "فرکانس ۴۳۲ هرتز (آرامش ذهن و ضد اضطراب)", "نوای کیهان", "healing", 24, R.raw.luteal_frequency_432),
-            MeditationTrack("h3", "پد امبینت خواب عمیق و استراحت", "آکوستیک درمانی", "healing", 24, R.raw.period_ambient_rest),
-            // Lo-Fi
-            MeditationTrack("l1", "بیت‌های لوفای تسکین PMS", "کافه لوفای", "lofi", 24, R.raw.luteal_lofi_chill),
-            MeditationTrack("l2", "آوای گرم سازهای زهی عصرگاهی", "لوفای ملایم", "lofi", 24, R.raw.luteal_warm_acoustic),
-            MeditationTrack("l3", "شروع دوباره و پویایی ذهن", "ریلکس بیتس", "lofi", 24, R.raw.follicular_acoustic_start)
+            MeditationTrack("n1", "جنگل صبحگاهی، جویبار و پرندگان", "استودیو هانیتا • آوای طبیعت", "nature", 64, R.raw.nature_forest_birds),
+            MeditationTrack("n2", "باران شبانه روی برگ‌ها", "استودیو هانیتا • آوای طبیعت", "nature", 64, R.raw.period_rain_nature),
+            MeditationTrack("n3", "امواج آرام ساحل", "استودیو هانیتا • آوای طبیعت", "nature", 72, R.raw.nature_ocean_waves),
+            // Calm tones
+            MeditationTrack("h1", "تُن ۵۲۸ هرتز با ضربان دوگوش ۴ هرتز (با هدفون)", "استودیو هانیتا • تن‌آرامی", "healing", 64, R.raw.period_frequency_528),
+            MeditationTrack("h2", "کوک ۴۳۲ هرتز با ضربان دوگوش ۶ هرتز (با هدفون)", "استودیو هانیتا • آرامش ذهن", "healing", 64, R.raw.luteal_frequency_432),
+            MeditationTrack("h3", "پد امبینت خواب عمیق و استراحت", "استودیو هانیتا • امبینت", "healing", 64, R.raw.period_ambient_rest),
+            // Lo-Fi & acoustic
+            MeditationTrack("l1", "بیت‌های لوفای تسکین PMS", "استودیو هانیتا • لوفای جاز", "lofi", 66, R.raw.luteal_lofi_chill),
+            MeditationTrack("l2", "آوای گرم ویولنسل و سازهای زهی", "استودیو هانیتا • آکوستیک", "lofi", 64, R.raw.luteal_warm_acoustic),
+            MeditationTrack("l3", "گیتار صبحگاهی و آواز پرندگان", "استودیو هانیتا • آکوستیک", "lofi", 60, R.raw.follicular_morning_joy)
         )
     }
 
@@ -99,9 +99,20 @@ fun MeditationMusicScreen(
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val mediaPlayer = remember { android.media.MediaPlayer() }
+    // Pause (and show "paused") when a call or another app takes the sound.
+    val playbackFocus = remember {
+        com.example.utils.PlaybackFocus(context) {
+            try {
+                if (mediaPlayer.isPlaying) mediaPlayer.pause()
+            } catch (_: Exception) {
+            }
+            isPlaying = false
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
+            playbackFocus.abandon()
             try {
                 if (mediaPlayer.isPlaying) mediaPlayer.stop()
                 mediaPlayer.release()
@@ -112,11 +123,13 @@ fun MeditationMusicScreen(
     fun playTrack(track: MeditationTrack) {
         try {
             mediaPlayer.reset()
+            mediaPlayer.setAudioAttributes(com.example.utils.PlaybackFocus.ATTRIBUTES)
             val afd = context.resources.openRawResourceFd(track.rawResId)
             mediaPlayer.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
             afd.close()
             mediaPlayer.isLooping = isLooping
             mediaPlayer.prepare()
+            playbackFocus.request()
             mediaPlayer.start()
             isPlaying = true
             currentProgressSec = 0
@@ -136,6 +149,7 @@ fun MeditationMusicScreen(
         try {
             if (isPlaying) {
                 if (!mediaPlayer.isPlaying && currentTrack != null) {
+                    playbackFocus.request()
                     mediaPlayer.start()
                 }
             } else {
@@ -184,11 +198,18 @@ fun MeditationMusicScreen(
             if (!isLooping) {
                 val active = currentTrack ?: return@setOnCompletionListener
                 val currentIndex = filteredTracks.indexOfFirst { it.id == active.id }
-                if (currentIndex != -1 && currentIndex < filteredTracks.lastIndex) {
-                    val next = filteredTracks[currentIndex + 1]
+                val next = when {
+                    currentIndex != -1 && currentIndex < filteredTracks.lastIndex -> filteredTracks[currentIndex + 1]
+                    filteredTracks.isNotEmpty() -> filteredTracks.first()
+                    else -> null
+                }
+                if (next == null) {
+                    isPlaying = false
+                } else if (next.id == active.id) {
+                    // Only one track in the list: setting the same track again does not restart it.
+                    playTrack(next)
+                } else {
                     currentTrack = next
-                } else if (filteredTracks.isNotEmpty()) {
-                    currentTrack = filteredTracks.first()
                 }
             }
         }

@@ -62,7 +62,9 @@ fun LogScreen(
     val jalaliSelected = remember(selectedDate) { JalaliCalendar.gregorianToJalali(selectedDate) }
 
     // Collect saved Room data for selected date
-    val savedRoomSymptoms by viewModel.getPhysicalSymptomsForDate(selectedDateStr).collectAsState(initial = emptyList())
+    // remember: a new Flow on every recomposition restarted the collection (and re-emitted empty).
+    val savedSymptomsFlow = remember(selectedDateStr) { viewModel.getPhysicalSymptomsForDate(selectedDateStr) }
+    val savedRoomSymptoms by savedSymptomsFlow.collectAsState(initial = emptyList())
     val allLogs by viewModel.allLogs.collectAsState()
     val existingDailyLog = remember(allLogs, selectedDateStr) { allLogs.find { it.dateStr == selectedDateStr } }
 
@@ -86,35 +88,38 @@ fun LogScreen(
     var showCycleEditDialogInLog by remember { mutableStateOf(false) }
 
     // Synchronize UI form when date or saved room data changes
-    var lastLoadedDate by remember { mutableStateOf("") }
-    LaunchedEffect(selectedDateStr, savedRoomSymptoms, existingDailyLog) {
-        if (lastLoadedDate != selectedDateStr) {
-            lastLoadedDate = selectedDateStr
+    // The form is filled from the database itself once per date. It used to fill from flows whose
+    // first value is an empty list, so the saved symptoms of the day never appeared and pressing
+    // "save" erased them.
+    LaunchedEffect(selectedDateStr) {
+        val dbSymptoms = viewModel.getPhysicalSymptomsListForDate(selectedDateStr)
+        val dbLog = viewModel.getLogForDate(selectedDateStr)
+        run {
             activeSymptoms.clear()
             symptomCategories.clear()
 
-            if (savedRoomSymptoms.isNotEmpty()) {
-                savedRoomSymptoms.forEach { s ->
+            if (dbSymptoms.isNotEmpty()) {
+                dbSymptoms.forEach { s ->
                     activeSymptoms[s.symptomName] = s.severity
                     symptomCategories[s.symptomName] = s.category
                 }
-            } else if (existingDailyLog != null && existingDailyLog.symptoms.isNotBlank()) {
+            } else if (dbLog != null && dbLog.symptoms.isNotBlank()) {
                 // Fallback to symptoms string from DailyLog if any
-                existingDailyLog.symptoms.split(",").map { it.trim() }.filter { it.isNotBlank() }.forEach { sym ->
+                dbLog.symptoms.split(",").map { it.trim() }.filter { it.isNotBlank() }.forEach { sym ->
                     activeSymptoms[sym] = "MODERATE"
                     symptomCategories[sym] = "عمومی"
                 }
             }
 
             // Sync flow, moods, notes, emoji
-            selectedFlow = existingDailyLog?.periodFlow ?: "NONE"
-            notes = existingDailyLog?.notes ?: ""
-            selectedEmoji = existingDailyLog?.emoji ?: ""
-            waterIntake = existingDailyLog?.waterIntake ?: 0
-            bbtInput = existingDailyLog?.bbt?.let { if (it > 0f) it.toString() else "" } ?: ""
-            weightInput = existingDailyLog?.weight?.let { if (it > 0f) it.toString() else "" } ?: ""
+            selectedFlow = dbLog?.periodFlow ?: "NONE"
+            notes = dbLog?.notes ?: ""
+            selectedEmoji = dbLog?.emoji ?: ""
+            waterIntake = dbLog?.waterIntake ?: 0
+            bbtInput = dbLog?.bbt?.let { if (it > 0f) it.toString() else "" } ?: ""
+            weightInput = dbLog?.weight?.let { if (it > 0f) it.toString() else "" } ?: ""
             moods.clear()
-            existingDailyLog?.moods?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.let {
+            dbLog?.moods?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.let {
                 moods.addAll(it)
             }
         }
@@ -189,7 +194,7 @@ fun LogScreen(
                     Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "ثبت علائم جسمی در دیتابیس محلی (Room)",
+                            text = "ثبت علائم جسمی",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground
@@ -204,7 +209,7 @@ fun LogScreen(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (savedRoomSymptoms.isEmpty()) "هیچ علامتی برای این تاریخ ثبت نشده" else "${savedRoomSymptoms.size} علامت ذخیره شده در Room",
+                                text = if (savedRoomSymptoms.isEmpty()) "هیچ علامتی برای این تاریخ ثبت نشده" else "${savedRoomSymptoms.size} علامت ذخیره شده",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Medium
@@ -624,12 +629,15 @@ fun LogScreen(
                         emoji = selectedEmoji,
                         waterIntake = waterIntake,
                         bbt = bbtInput.toFloatOrNull(),
-                        weight = weightInput.toFloatOrNull()
+                        weight = weightInput.toFloatOrNull(),
+                        // The form shows every field of the day, so clearing a mood or note sticks.
+                        replaceDayState = true,
+                        measurementsFromForm = true
                     )
 
                     coroutineScope.launch {
                         snackbarHostState.showSnackbar(
-                            message = "علائم جسمانی با موفقیت در دیتابیس محلی (Room) ذخیره شد ✨"
+                            message = "علائم جسمانی با موفقیت ذخیره شد ✨"
                         )
                     }
                 },
@@ -642,7 +650,7 @@ fun LogScreen(
                 Icon(Icons.Filled.Check, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "ذخیره در دیتابیس محلی (Room)",
+                    text = "ذخیره علائم",
                     color = Color.White,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
@@ -664,7 +672,7 @@ fun LogScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "سوابق ثبت شده در دیتابیس Room برای این تاریخ",
+                            text = "علائم ثبت‌شده برای این تاریخ",
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant

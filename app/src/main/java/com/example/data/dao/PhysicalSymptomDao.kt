@@ -13,6 +13,9 @@ interface PhysicalSymptomDao {
     @Query("SELECT * FROM physical_symptom_logs ORDER BY dateStr DESC, id DESC")
     fun getAllSymptoms(): Flow<List<PhysicalSymptomLog>>
 
+    @Query("SELECT * FROM physical_symptom_logs ORDER BY dateStr DESC, id DESC")
+    suspend fun getAllSymptomsList(): List<PhysicalSymptomLog>
+
     @Query("SELECT * FROM physical_symptom_logs WHERE dateStr = :dateStr ORDER BY id ASC")
     fun getSymptomsForDate(dateStr: String): Flow<List<PhysicalSymptomLog>>
 

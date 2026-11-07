@@ -197,12 +197,12 @@ fun VisualDailySymptomLogger(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Storage,
-                            contentDescription = "Room Database",
+                            contentDescription = "وضعیت ذخیره",
                             tint = if (hasRoomData) SleekPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(12.dp)
                         )
                         Text(
-                            text = if (hasRoomData) "ذخیره در Room ✓" else "پایگاه داده Room",
+                            text = if (hasRoomData) "ذخیره شده ✓" else "ثبت نشده",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (hasRoomData) SleekPrimaryDark else MaterialTheme.colorScheme.onSurfaceVariant
@@ -678,7 +678,7 @@ fun VisualDailySymptomLogger(
                     ) {
                         Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF2E7D32))
                         Text(
-                            text = "علائم و وضعیت روز با موفقیت در پایگاه داده Room ذخیره شد ✨",
+                            text = "علائم و وضعیت روز با موفقیت ذخیره شد ✨",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1B5E20)
@@ -742,7 +742,7 @@ fun VisualDailySymptomLogger(
                     Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "ذخیره در پایگاه داده Room 💾",
+                        text = "ذخیره اطلاعات این روز 💾",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp
                     )

@@ -134,4 +134,31 @@ class CyclePredictorTest {
         assertTrue(next.isAfter(today))
         assertEquals(0L, java.time.temporal.ChronoUnit.DAYS.between(start.plusDays(13), next) % 28)
     }
+
+    @Test
+    fun `bleeding days are grouped into periods with their real end day`() {
+        val first = LocalDate.of(2026, 1, 1)
+        val second = LocalDate.of(2026, 1, 29)
+        val days = period(first, 5) + period(second, 4) + listOf(first.plusDays(2)) // duplicate ignored
+        val episodes = CyclePredictor.periodEpisodes(days)
+        assertEquals(listOf(first to first.plusDays(4), second to second.plusDays(3)), episodes)
+        assertTrue(CyclePredictor.periodEpisodes(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun `next ovulation is today or later and matches the calendar model`() {
+        val start = LocalDate.of(2026, 3, 1)
+        val p = CyclePredictor.predict(period(start, 5), 28, today)
+        // Cycle day 14 of the current cycle (2026-03-14) is already past on 2026-03-20.
+        val next = CyclePredictor.nextOvulation(p, today)!!
+        assertEquals(LocalDate.of(2026, 4, 11), next)
+        assertEquals(LocalDate.of(2026, 3, 14), CyclePredictor.nextOvulation(p, LocalDate.of(2026, 3, 14)))
+        val (from, to) = CyclePredictor.fertileWindow(next)
+        assertEquals(next.minusDays(5), from)
+        assertEquals(next.plusDays(1), to)
+        // The fertile window agrees with dayStatus.
+        assertTrue(CyclePredictor.dayStatus(from, p, false, today).isFertile)
+        assertTrue(CyclePredictor.dayStatus(to, p, false, today).isFertile)
+        assertNull(CyclePredictor.nextOvulation(CyclePredictor.predict(emptyList(), 28, today), today))
+    }
 }

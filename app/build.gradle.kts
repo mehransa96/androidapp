@@ -5,14 +5,14 @@ plugins {
   alias(libs.plugins.roborazzi)
 }
 
-// Firebase config (google-services.json) is NOT committed to the repository.
-// The plugin is applied only when the file is present, so the project still builds
-// (in offline-only mode) on a fresh clone and in CI.
+// Accounts and all user data are local to the phone: there is no Firebase Auth or Firestore.
+// Firebase is used ONLY for the optional AI features (Firebase AI Logic + App Check). Its config
+// (google-services.json) is NOT committed; without it the app builds and works fully offline.
 val hasGoogleServicesJson = file("google-services.json").exists()
 if (hasGoogleServicesJson) {
   apply(plugin = libs.plugins.google.services.get().pluginId)
 } else {
-  logger.warn("app/google-services.json not found: building without Firebase (cloud sync and AI disabled).")
+  logger.warn("app/google-services.json not found: building without Firebase (AI features disabled).")
 }
 
 android {
@@ -23,8 +23,8 @@ android {
     applicationId = "com.aistudio.hanita.zxwpm"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
-    versionName = "1.1.0"
+    versionCode = 3
+    versionName = "1.2.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -107,11 +107,8 @@ dependencies {
   implementation(libs.coil.compose)
   // Gemini is reached only through Firebase AI Logic (no API key inside the APK).
   implementation(libs.firebase.ai)
-  implementation(libs.firebase.firestore)
-  implementation(libs.firebase.auth)
   implementation(libs.firebase.appcheck.playintegrity)
   debugImplementation(libs.firebase.appcheck.debug)
-  implementation(libs.play.services.auth)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.moshi.kotlin)

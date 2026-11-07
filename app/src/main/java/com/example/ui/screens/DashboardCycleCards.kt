@@ -83,6 +83,7 @@ import com.example.ui.viewmodel.MahitaViewModel
 import com.example.ui.viewmodel.PredictionInfo
 
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
@@ -100,7 +101,7 @@ fun HeaderRow(
     onOpenSettings: () -> Unit,
     onNavigateToReminders: () -> Unit,
     onNavigateToAvatarGenerator: () -> Unit,
-    onLogout: () -> Unit
+    onLock: () -> Unit
 ) {
     val jalaliToday = com.example.utils.JalaliCalendar.gregorianToJalali(java.time.LocalDate.now())
     Row(
@@ -160,10 +161,10 @@ fun HeaderRow(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(onClick = onLogout) {
+            IconButton(onClick = onLock) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Logout,
-                    contentDescription = "خروج",
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = "قفل کردن برنامه",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -434,7 +435,8 @@ fun AITipsCard(
     averageCycleLength: Float,
     aiDailyTip: String?,
     isFetchingAiTip: Boolean,
-    onFetchTip: (String, Int, Float) -> Unit
+    onFetchTip: (String, Int, Float) -> Unit,
+    aiTipError: String? = null
 ) {
     val phaseName = when {
         info.isPeriod -> "قاعدگی (Menstrual)"
@@ -489,6 +491,15 @@ fun AITipsCard(
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (aiTipError != null && !isFetchingAiTip) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = aiTipError,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
                     onClick = { onFetchTip(phaseName, info.currentDay, averageCycleLength) },

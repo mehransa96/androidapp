@@ -278,7 +278,8 @@ fun ProfessionalDatePickerDialog(
                         modifier = Modifier.size(34.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            // AutoMirrored ArrowBack points right in RTL: outward, toward the past.
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "ماه قبل",
                             tint = MaterialTheme.colorScheme.primary
                         )
@@ -321,7 +322,7 @@ fun ProfessionalDatePickerDialog(
                         modifier = Modifier.size(34.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = "ماه بعد",
                             tint = MaterialTheme.colorScheme.primary
                         )

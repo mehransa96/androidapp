@@ -11,7 +11,10 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
 
-/** Restores all reminders from the local database (after boot, time change, a fired alarm, daily). */
+/**
+ * Restores all reminders from the local database (after boot, time change, a fired alarm, daily)
+ * and, once a day, writes the encrypted automatic safety copy of the user's data.
+ */
 class RescheduleWorker(
     appContext: Context,
     workerParams: WorkerParameters
@@ -19,6 +22,7 @@ class RescheduleWorker(
 
     override suspend fun doWork(): Result {
         ReminderScheduler.rescheduleFromStorage(applicationContext)
+        com.example.tools.LocalSnapshots.takeIfDue(applicationContext)
         return Result.success()
     }
 

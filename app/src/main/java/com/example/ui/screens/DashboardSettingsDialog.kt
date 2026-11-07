@@ -102,8 +102,6 @@ fun SettingsDialog(
 ) {
     if (!show) return
 
-    val isSyncing by viewModel.isSyncing.collectAsState()
-    val syncStatusMessage by viewModel.syncStatusMessage.collectAsState()
     val isNotificationEnabled by viewModel.isNotificationEnabled.collectAsState()
     val daysBefore by viewModel.daysBefore.collectAsState()
     val averageCycleLength by viewModel.averageCycleLength.collectAsState()
@@ -138,7 +136,6 @@ fun SettingsDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(onClick = {
-                viewModel.clearSyncStatusMessage()
                 onDismiss()
             }) {
                 Text("تایید", color = SleekPrimary)
@@ -146,7 +143,7 @@ fun SettingsDialog(
         },
         title = {
             Text(
-                "تنظیمات و همگام‌سازی ابری",
+                "تنظیمات",
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
                 color = SleekTextDark
@@ -420,8 +417,16 @@ fun SettingsDialog(
                             )
                             Button(
                                 onClick = {
-                                    viewModel.setWeight(editWeight)
-                                    android.widget.Toast.makeText(context, "وزن شما با موفقیت در فایربیس ذخیره شد.", android.widget.Toast.LENGTH_SHORT).show()
+                                    // Accept Persian/Arabic digits and a decimal comma; keep only realistic values.
+                                    val normalized = com.example.security.AppLockManager.normalizeDecimal(editWeight)
+                                    val kg = normalized.toFloatOrNull()
+                                    if (kg == null || kg !in 25f..250f) {
+                                        android.widget.Toast.makeText(context, "لطفاً وزن معتبر بین ۲۵ تا ۲۵۰ کیلوگرم وارد کنید.", android.widget.Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    viewModel.setWeight(normalized)
+                                    editWeight = normalized
+                                    android.widget.Toast.makeText(context, "وزن شما روی همین گوشی ذخیره شد.", android.widget.Toast.LENGTH_SHORT).show()
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary),
                                 shape = RoundedCornerShape(12.dp),
@@ -551,22 +556,27 @@ fun SettingsDialog(
                                         return@Button
                                     }
                                     if (editStartDate.isNotBlank()) {
-                                        try {
+                                        val parsedStart = try {
                                             java.time.LocalDate.parse(editStartDate, java.time.format.DateTimeFormatter.ISO_LOCAL_DATE)
                                         } catch (e: Exception) {
                                             android.widget.Toast.makeText(context, "فرمت تاریخ شروع نامعتبر است (باید YYYY-MM-DD باشد)", android.widget.Toast.LENGTH_SHORT).show()
                                             return@Button
                                         }
+                                        // Same rule as the calendar: a period cannot start in the future.
+                                        if (parsedStart.isAfter(java.time.LocalDate.now())) {
+                                            android.widget.Toast.makeText(context, "شروع پریود را نمی‌توان برای روزهای آینده ثبت کرد", android.widget.Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
                                     }
                                     viewModel.updateCycleSettings(editStartDate, durationInt)
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    android.widget.Toast.makeText(context, "اطلاعات چرخه شما ذخیره و در فایربیس ابری همگام‌سازی شد.", android.widget.Toast.LENGTH_SHORT).show()
+                                    android.widget.Toast.makeText(context, "اطلاعات چرخه روی همین گوشی ذخیره شد ✨", android.widget.Toast.LENGTH_SHORT).show()
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFA78BFA)),
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.height(45.dp).weight(1.3f)
                             ) {
-                                Text("ذخیره چرخه در فایربیس", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text("ذخیره اطلاعات چرخه", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
                         }
                         
@@ -621,89 +631,49 @@ fun SettingsDialog(
 
                 HorizontalDivider(color = SleekBorder)
 
-                // Section 2: Firebase Firestore Cloud Sync
+                // Section 2: where the data lives
                 Text(
-                    "پشتیبان‌گیری و همگام‌سازی ابری",
+                    "حساب کاربری و ذخیره‌سازی",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                     color = SleekPrimary
                 )
-                
                 Text(
-                    "اطلاعات شما به‌طور پیش‌فرض فقط روی همین گوشی ذخیره می‌شود. اگر با حساب گوگل وارد شده باشید، یک نسخه پشتیبان رمزنگاری‌شده فقط برای حساب خودتان در Firebase نگهداری می‌شود و هیچ کاربر دیگری به آن دسترسی ندارد.",
+                    "حساب شما فقط روی همین گوشی است و همه اطلاعات در حافظه خصوصی برنامه ذخیره می‌شود؛ جز درخواست‌هایی که خودتان به دستیار هوشمند می‌فرستید، هیچ داده‌ای از گوشی خارج نمی‌شود. هر روز یک نسخه رمزنگاری‌شده خودکار هم نگه داشته می‌شود. برای انتقال به گوشی جدید یا نگهداری نسخه بیرونی، از بخش «حریم خصوصی و پشتیبان» فایل پشتیبان رمزدار بگیرید.",
                     fontSize = 11.sp,
                     color = SleekTextMedium,
                     lineHeight = 16.sp
                 )
-
-                if (syncStatusMessage != null) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = SleekPrimaryLight),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = syncStatusMessage!!,
-                            color = SleekPrimaryDark,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(8.dp)
-                        )
-                    }
-                }
-
-                Button(
-                    onClick = { viewModel.syncWithCloud() },
-                    enabled = !isSyncing,
+                var editName by remember(userName) { mutableStateOf(userName) }
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary),
-                    shape = RoundedCornerShape(12.dp)
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (isSyncing) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.Sync,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                    }
-                    Text(
-                        if (isSyncing) "در حال همگام‌سازی..." else "همگام‌سازی دستی با سرور",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
-                    )
-                }
-
-                var confirmCloudDelete by remember { mutableStateOf(false) }
-                if (viewModel.isCloudSyncAvailable()) {
-                    OutlinedButton(
-                        onClick = { confirmCloudDelete = true },
-                        enabled = !isSyncing,
-                        modifier = Modifier.fillMaxWidth(),
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it.take(com.example.data.preferences.UserPreferencesManager.MAX_NAME_LENGTH) },
+                        label = { Text("نام شما", fontSize = 11.sp) },
+                        modifier = Modifier.weight(1.2f),
+                        singleLine = true,
                         shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("حذف نسخه ابری اطلاعات من", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                if (confirmCloudDelete) {
-                    AlertDialog(
-                        onDismissRequest = { confirmCloudDelete = false },
-                        title = { Text("حذف نسخه ابری؟") },
-                        text = { Text("همه اطلاعات ذخیره‌شده شما در سرور حذف می‌شود. اطلاعات روی این گوشی باقی می‌ماند.") },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                confirmCloudDelete = false
-                                viewModel.deleteCloudData()
-                            }) { Text("حذف شود", color = MaterialTheme.colorScheme.error) }
-                        },
-                        dismissButton = { TextButton(onClick = { confirmCloudDelete = false }) { Text("انصراف") } }
                     )
+                    val nameContext = androidx.compose.ui.platform.LocalContext.current
+                    Button(
+                        onClick = {
+                            if (com.example.data.preferences.UserPreferencesManager.sanitizeName(editName).isBlank()) {
+                                android.widget.Toast.makeText(nameContext, "نام نمی‌تواند خالی باشد.", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                viewModel.setUserName(editName)
+                                android.widget.Toast.makeText(nameContext, "نام شما ذخیره شد.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = SleekPrimary),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.height(45.dp)
+                    ) {
+                        Text("ذخیره نام", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
                 }
 
                 HorizontalDivider(color = SleekBorder)

@@ -437,7 +437,7 @@ fun DailyPhysicalSymptomsCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Room DB",
+                            text = "امروز",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary

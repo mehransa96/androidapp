@@ -48,6 +48,7 @@ fun CycleHistoryScreen(
     // Dialog state for editing an existing record or creating a new one
     var recordToEdit by remember { mutableStateOf<CycleRecord?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
+    var recordToDelete by remember { mutableStateOf<CycleRecord?>(null) }
 
     // Sort records descending by start date
     val sortedRecords = remember(records) {
@@ -283,7 +284,8 @@ fun CycleHistoryScreen(
                             },
                             onDelete = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                viewModel.deleteFullCycleRecord(record)
+                                // One tap used to delete the cycle and its bleeding days at once.
+                                recordToDelete = record
                             }
                         )
                     }
@@ -323,6 +325,24 @@ fun CycleHistoryScreen(
                 viewModel.deleteFullCycleRecord(curr)
                 recordToEdit = null
             }
+        )
+    }
+
+    recordToDelete?.let { record ->
+        val startJ = runCatching {
+            com.example.utils.JalaliCalendar.gregorianToJalali(LocalDate.parse(record.startDate)).formatLong()
+        }.getOrDefault(record.startDate)
+        AlertDialog(
+            onDismissRequest = { recordToDelete = null },
+            title = { Text("حذف این دوره؟", fontWeight = FontWeight.Bold) },
+            text = { Text("دوره‌ای که در $startJ شروع شده و روزهای پریود آن حذف می‌شود.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteFullCycleRecord(record)
+                    recordToDelete = null
+                }) { Text("حذف شود", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { recordToDelete = null }) { Text("انصراف") } }
         )
     }
 

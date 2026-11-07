@@ -30,6 +30,9 @@ interface DailyLogDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLog(log: DailyLog)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLogs(logs: List<DailyLog>)
+
     @Query("DELETE FROM daily_logs WHERE dateStr = :date")
     suspend fun deleteLogByDate(date: String)
 }

@@ -36,12 +36,33 @@ fun HealthScreen(
 ) {
     val initialWeight by viewModel.userWeight.collectAsState()
     val waterIntake by viewModel.waterGlasses.collectAsState()
+    // Sleep and steps used to live only on screen and were lost on leaving it; now they are saved per day.
+    val savedSleep by viewModel.todaySleepHours.collectAsState()
+    val savedSteps by viewModel.todaySteps.collectAsState()
     var sleepHours by remember { mutableFloatStateOf(7.5f) }
     var weight by remember { mutableStateOf(initialWeight) }
-    var steps by remember { mutableStateOf("4500") }
+    var steps by remember { mutableStateOf("") }
 
     LaunchedEffect(initialWeight) {
         weight = initialWeight
+    }
+    LaunchedEffect(savedSleep) { savedSleep?.let { sleepHours = it } }
+    LaunchedEffect(savedSteps) { savedSteps?.let { steps = it.toString() } }
+
+    /** Validates and saves everything on this screen; returns an error message or null. */
+    fun saveAll(includeActivity: Boolean): String? {
+        val kgText = com.example.security.AppLockManager.normalizeDecimal(weight)
+        val kg = kgText.toFloatOrNull()
+        if (kg == null || kg !in 25f..250f) return "لطفاً وزن معتبر بین ۲۵ تا ۲۵۰ کیلوگرم وارد کنید."
+        viewModel.setWeight(kgText)
+        weight = kgText
+        if (includeActivity) {
+            val stepsText = com.example.security.AppLockManager.normalizeDigits(steps)
+            val stepCount = if (stepsText.isBlank()) null else stepsText.toIntOrNull()
+            if (stepsText.isNotBlank() && (stepCount == null || stepCount > 200_000)) return "تعداد قدم‌ها معتبر نیست."
+            viewModel.saveTodayActivity(sleepHours, stepCount)
+        }
+        return null
     }
 
     Scaffold(
@@ -128,8 +149,8 @@ fun HealthScreen(
                     weight = weight, 
                     onWeightChange = { weight = it }, 
                     onSaveClick = {
-                        viewModel.setWeight(weight)
-                        android.widget.Toast.makeText(context, "تغییرات وزن ذخیره و با فایربیس همگام شد.", android.widget.Toast.LENGTH_SHORT).show()
+                        val error = saveAll(includeActivity = false)
+                        android.widget.Toast.makeText(context, error ?: "وزن شما روی همین گوشی ذخیره شد.", android.widget.Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f)
                 )
@@ -140,8 +161,8 @@ fun HealthScreen(
             
             Button(
                 onClick = {
-                    viewModel.setWeight(weight)
-                    android.widget.Toast.makeText(context, "تغییرات سلامتی با موفقیت ذخیره و ابری شد.", android.widget.Toast.LENGTH_SHORT).show()
+                    val error = saveAll(includeActivity = true)
+                    android.widget.Toast.makeText(context, error ?: "وزن، خواب و قدم‌های امروز ذخیره شد.", android.widget.Toast.LENGTH_SHORT).show()
                 },
                 modifier = Modifier
                     .fillMaxWidth()

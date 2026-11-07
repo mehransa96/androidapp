@@ -1,0 +1,15 @@
+Hanita music and soundscapes (app/src/main/res/raw/*.mp3)
+
+All 18 audio files were composed and rendered for the Hanita project by the
+script tools/music/compose_tracks.py, using only synthesis code contained in that
+script (additive piano, Karplus-Strong strings, FM electric piano, synthesized
+drums, filtered-noise rain/sea/wind and synthesized bird calls). No third-party
+recordings, samples, loops or melodies were used.
+
+To the extent possible under law, the Hanita project has waived all copyright and
+related or neighboring rights to these audio files under the Creative Commons
+CC0 1.0 Universal Public Domain Dedication:
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The files can be regenerated at any time with:
+    python3 tools/music/compose_tracks.py

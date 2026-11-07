@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.PhysicalSymptomLog
@@ -51,7 +52,8 @@ fun CalendarScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val todayLocalDate = remember { LocalDate.now() }
+    // Follows the date change at midnight while the calendar stays open.
+    val todayLocalDate by viewModel.currentDate.collectAsState()
     val todayJalali = remember(todayLocalDate) { JalaliCalendar.gregorianToJalali(todayLocalDate) }
     var currentMonth by remember { mutableStateOf(JalaliDate(todayJalali.year, todayJalali.month, 1)) }
     val medReminders by viewModel.medicationReminders.collectAsState()
@@ -59,7 +61,6 @@ fun CalendarScreen(
     val logs by viewModel.allLogs.collectAsState()
     val allPhysicalSymptoms by viewModel.allPhysicalSymptoms.collectAsState()
     val cycleRecords by viewModel.allCycleRecords.collectAsState()
-    val lastPeriodDateStr by viewModel.lastPeriodDate.collectAsState()
     val averageCycleLength by viewModel.averageCycleLength.collectAsState()
 
     // Symptoms grouped by dateStr from Room local database
@@ -67,8 +68,11 @@ fun CalendarScreen(
         allPhysicalSymptoms.groupBy { it.dateStr }
     }
 
-    // Active Screen Tab (0: Visual Calendar & Daily Symptom Logger, 1: Touch Period Range Selector)
+    // Active tab: 0 = monthly overview & daily notes (default, what people open a calendar for),
+    // 1 = touch selection of a period's start and end.
     var selectedTab by remember { mutableIntStateOf(0) }
+    var cycleToDelete by remember { mutableStateOf<CycleRecord?>(null) }
+    val logsByDate = remember(logs) { logs.associateBy { it.dateStr } }
 
     // Pre-selected range for the interactive widget
     var interactiveInitialStart by remember { mutableStateOf<LocalDate?>(null) }
@@ -198,8 +202,8 @@ fun CalendarScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 listOf(
-                    0 to "ثبت لمسی شروع و پایان 🩸",
-                    1 to "نمای ماهانه و یادداشت‌ها 📅"
+                    0 to "نمای ماهانه و یادداشت‌ها 📅",
+                    1 to "ثبت لمسی شروع و پایان 🩸"
                 ).forEach { (tabIndex, tabTitle) ->
                     val isTabSelected = selectedTab == tabIndex
                     Box(
@@ -226,10 +230,12 @@ fun CalendarScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (selectedTab == 0) {
+            if (selectedTab == 1) {
                 // ==========================================
-                // TAB 0: Interactive Touch Period Selection Widget
+                // TAB 1: Interactive Touch Period Selection Widget
                 // ==========================================
+                // Keyed on the preset range so "select range" from the monthly tab always applies.
+                key(interactiveInitialStart, interactiveInitialEnd) {
                 InteractivePeriodCalendarWidget(
                     recordedLogs = logs,
                     initialStartDate = interactiveInitialStart,
@@ -249,6 +255,7 @@ fun CalendarScreen(
                         Toast.makeText(context, "اطلاعات دوره انتخابی پاک شد", Toast.LENGTH_SHORT).show()
                     }
                 )
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -341,7 +348,7 @@ fun CalendarScreen(
                                             )
                                         }
                                         IconButton(
-                                            onClick = { viewModel.deleteFullCycleRecord(record) },
+                                            onClick = { cycleToDelete = record },
                                             modifier = Modifier.size(28.dp)
                                         ) {
                                             Icon(
@@ -360,7 +367,7 @@ fun CalendarScreen(
                 }
             } else {
                 // ==========================================
-                // TAB 1: Overview Calendar & Daily Notes
+                // TAB 0: Overview Calendar & Daily Notes
                 // ==========================================
 
                 // Month Navigation Card
@@ -389,7 +396,8 @@ fun CalendarScreen(
                             },
                             colors = IconButtonDefaults.iconButtonColors(containerColor = SleekBorder.copy(alpha = 0.3f))
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "ماه قبل", tint = SleekPrimary)
+                            // AutoMirrored: points right (outward, toward the past) in the RTL layout.
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "ماه قبل", tint = SleekPrimary)
                         }
                         
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -441,7 +449,7 @@ fun CalendarScreen(
                             },
                             colors = IconButtonDefaults.iconButtonColors(containerColor = SleekBorder.copy(alpha = 0.3f))
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "ماه بعد", tint = SleekPrimary)
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "ماه بعد", tint = SleekPrimary)
                         }
                     }
                 }
@@ -453,16 +461,19 @@ fun CalendarScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(SleekSurface, shape = RoundedCornerShape(12.dp))
-                        .padding(vertical = 8.dp, horizontal = 4.dp)
+                        .padding(vertical = 8.dp)
                 ) {
                     val daysOfWeek = listOf("ش", "ی", "د", "س", "چ", "پ", "ج")
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                        daysOfWeek.forEach { day ->
+                    // Same equal-width columns as the day grid so each letter sits above its column.
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        daysOfWeek.forEachIndexed { index, day ->
                             Text(
                                 text = day,
                                 fontWeight = FontWeight.Black,
-                                color = SleekTextLight,
-                                fontSize = 14.sp
+                                color = if (index == 6) MaterialTheme.colorScheme.error.copy(alpha = 0.8f) else SleekTextLight,
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
@@ -483,10 +494,7 @@ fun CalendarScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     for (weekIndex in 0 until weeksCount) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceAround
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth()) {
                             for (dayOfWeek in 0 until 7) {
                                 val slotIndex = weekIndex * 7 + dayOfWeek
                                 if (slotIndex < offset || slotIndex >= totalSlots) {
@@ -495,7 +503,7 @@ fun CalendarScreen(
                                     val dayIndex = slotIndex - offset
                                     val date = JalaliDate(currentMonth.year, currentMonth.month, dayIndex + 1)
                                     val localDateStr = date.toLocalDate().toString()
-                                    val dayLog = logs.find { it.dateStr == localDateStr }
+                                    val dayLog = logsByDate[localDateStr]
                                     val daySymptoms = symptomsByDate[localDateStr] ?: emptyList()
                                     
                                     val hasRecordedPeriodFlow = dayLog?.periodFlow != null && dayLog.periodFlow != "NONE"
@@ -639,6 +647,16 @@ fun CalendarScreen(
                     (datesWithPhysical + datesWithDaily).distinct().size
                 }
 
+                // The third metric used to count every symptom ever logged, under a "this month" strip.
+                val totalSymptomsInMonth = remember(allPhysicalSymptoms, currentMonth) {
+                    allPhysicalSymptoms.count { s ->
+                        val date = runCatching { LocalDate.parse(s.dateStr) }.getOrNull()
+                        date != null && JalaliCalendar.gregorianToJalali(date).let {
+                            it.year == currentMonth.year && it.month == currentMonth.month
+                        }
+                    }
+                }
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = SleekSurface),
@@ -658,13 +676,13 @@ fun CalendarScreen(
                         }
                         Box(modifier = Modifier.height(24.dp).width(1.dp).background(SleekBorder))
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(text = "📝 ثبت علائم (Room)", fontSize = 11.sp, color = SleekTextMedium)
+                            Text(text = "📝 روزهای دارای علائم", fontSize = 11.sp, color = SleekTextMedium)
                             Text(text = "$totalSymptomDaysInMonth روز", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7C3AED))
                         }
                         Box(modifier = Modifier.height(24.dp).width(1.dp).background(SleekBorder))
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(text = "🟣 کل علائم ثبت‌شده", fontSize = 11.sp, color = SleekTextMedium)
-                            Text(text = "${allPhysicalSymptoms.size} مورد", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SleekTextDark)
+                            Text(text = "🟣 علائم این ماه", fontSize = 11.sp, color = SleekTextMedium)
+                            Text(text = "$totalSymptomsInMonth مورد", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = SleekTextDark)
                         }
                     }
                 }
@@ -672,8 +690,9 @@ fun CalendarScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // Actions for selected date
-                if (selectedDate != null) {
+                if (selectedDate != null && !selectedDate!!.toLocalDate().isAfter(todayLocalDate)) {
                     val localDate = selectedDate!!.toLocalDate()
+                    val selectedJalaliText = selectedDate!!.formatLong()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -681,8 +700,9 @@ fun CalendarScreen(
                         Button(
                             onClick = {
                                 interactiveInitialStart = localDate
-                                interactiveInitialEnd = localDate.plusDays(4)
-                                selectedTab = 0
+                                // Never pre-select days after today.
+                                interactiveInitialEnd = com.example.ui.components.earlierOf(localDate.plusDays(4), todayLocalDate)
+                                selectedTab = 1
                             },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -696,7 +716,7 @@ fun CalendarScreen(
                         OutlinedButton(
                             onClick = {
                                 viewModel.updateCycleSettings(localDate.toString(), averageCycleLength)
-                                Toast.makeText(context, "تاریخ شروع به $localDate تغییر یافت.", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "شروع پریود در $selectedJalaliText ثبت شد 🩸", Toast.LENGTH_SHORT).show()
                             },
                             shape = RoundedCornerShape(12.dp)
                         ) {
@@ -820,7 +840,8 @@ fun CalendarScreen(
                 if (selectedDate != null) {
                     val selDate = selectedDate!!
                     val localDateStr = selDate.toLocalDate().toString()
-                    val initialDailyLog = logs.find { it.dateStr == localDateStr }
+                    val initialDailyLog = logsByDate[localDateStr]
+                    val selJalaliText = selDate.formatLong()
                     val initialSymptoms = symptomsByDate[localDateStr] ?: emptyList()
 
                     val mappedCalendarPhase = when (selectedDatePhaseType.value) {
@@ -842,11 +863,15 @@ fun CalendarScreen(
                                 dateStr = localDateStr,
                                 symptoms = symptoms,
                                 flow = flow,
-                                moods = moods,
+                                // This form has no mood editor (it sends only the emoji), so keep the
+                                // moods logged elsewhere; notes and emoji follow what is on screen.
+                                moods = initialDailyLog?.moods?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
+                                    ?: moods,
                                 overallNotes = notes,
-                                emoji = emoji
+                                emoji = emoji,
+                                replaceDayState = true
                             )
-                            Toast.makeText(context, "اطلاعات روز $localDateStr با موفقیت در Room ذخیره شد ✨", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "اطلاعات روز $selJalaliText ذخیره شد ✨", Toast.LENGTH_SHORT).show()
                         },
                         onDelete = {
                             viewModel.savePhysicalSymptomForm(
@@ -855,16 +880,21 @@ fun CalendarScreen(
                                 flow = "NONE",
                                 moods = emptyList(),
                                 overallNotes = "",
-                                emoji = ""
+                                emoji = "",
+                                replaceDayState = true
                             )
-                            Toast.makeText(context, "علائم این روز از پایگاه داده Room پاک شد", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "اطلاعات روز $selJalaliText پاک شد", Toast.LENGTH_SHORT).show()
                         },
                         onToggleMedication = { medId, taken ->
                             viewModel.toggleMedicationTaken(localDateStr, medId, taken)
                         },
                         onSetPeriodStart = {
+                            if (selDate.toLocalDate().isAfter(todayLocalDate)) {
+                                Toast.makeText(context, "شروع پریود را نمی‌توان برای روزهای آینده ثبت کرد", Toast.LENGTH_SHORT).show()
+                                return@VisualDailySymptomLogger
+                            }
                             viewModel.updateCycleSettings(localDateStr, averageCycleLength)
-                            Toast.makeText(context, "شروع چرخه قاعدگی برای $localDateStr ثبت شد 🩸", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "شروع چرخه قاعدگی برای $selJalaliText ثبت شد 🩸", Toast.LENGTH_SHORT).show()
                         }
                     )
                 }
@@ -891,13 +921,13 @@ fun CalendarScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         LegendItem(color = Color(0xFFE8F5E9), textColor = Color(0xFF2E7D32), dotColor = Color(0xFF10B981), label = "فاز فولیکولار و بهار بدن (🌱)")
                         Spacer(modifier = Modifier.height(8.dp))
-                        LegendItem(color = Indigo50, textColor = Indigo500, dotColor = Indigo500, label = "پنجره باروری و تخمک‌گذاری (🌸)")
+                        LegendItem(color = Indigo50, textColor = Indigo500, dotColor = Indigo500, label = "پنجره باروری و تخمک‌گذاری (🥚)")
                         Spacer(modifier = Modifier.height(8.dp))
                         LegendItem(color = Amber50, textColor = Amber500, dotColor = Amber500, label = "سندرم پیش از قاعدگی (PMS) (🌪️)")
                         Spacer(modifier = Modifier.height(8.dp))
-                        LegendItem(color = Color(0xFFF3E8FF), textColor = Color(0xFF7C3AED), dotColor = Color(0xFF7C3AED), label = "روزهای دارای علائم ثبت‌شده در Room (🟣)")
+                        LegendItem(color = Color(0xFFF3E8FF), textColor = Color(0xFF7C3AED), dotColor = Color(0xFF7C3AED), label = "روزهای دارای علائم ثبت‌شده (🟣)")
                         Spacer(modifier = Modifier.height(8.dp))
-                        LegendItem(color = SleekBorder, textColor = SleekTextDark, dotColor = SleekTextDark, label = "امروز (تاریخ جاری بدنی)")
+                        LegendItem(color = SleekBorder, textColor = SleekTextDark, dotColor = SleekTextDark, label = "امروز")
                     }
                 }
                 
@@ -917,8 +947,10 @@ fun CalendarScreen(
             initialStartDate = parsedStart,
             initialEndDate = parsedEnd,
             initialCycleLength = averageCycleLength,
-            initialFlow = "MEDIUM",
+            // Use the flow really logged on the first day instead of always "MEDIUM".
+            initialFlow = logsByDate[record.startDate]?.periodFlow?.takeIf { it != "NONE" } ?: "MEDIUM",
             initialNotes = record.notes,
+            isExistingCycle = true,
             title = "ویرایش حرفه‌ای دوره قاعدگی 🩸",
             onDismissRequest = { cycleToEditInCalendar = null },
             onSaveCycle = { newStart, newEnd, length, flow, notes ->
@@ -943,11 +975,25 @@ fun CalendarScreen(
         )
     }
 
+    cycleToDelete?.let { record ->
+        ConfirmDeleteCycleDialog(
+            record = record,
+            onConfirm = {
+                viewModel.deleteFullCycleRecord(record)
+                cycleToDelete = null
+                Toast.makeText(context, "دوره انتخابی حذف شد", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { cycleToDelete = null }
+        )
+    }
+
     if (showNewCycleDialog) {
-        val parsedLastPeriod = runCatching { LocalDate.parse(lastPeriodDateStr) }.getOrNull() ?: LocalDate.now()
+        // A *new* period starts today by default; pre-filling the last period's date made
+        // "save" silently rewrite the previous cycle.
+        val newStart = LocalDate.now()
         ProfessionalCycleEditDialog(
-            initialStartDate = parsedLastPeriod,
-            initialEndDate = parsedLastPeriod.plusDays(4),
+            initialStartDate = newStart,
+            initialEndDate = newStart,
             initialCycleLength = averageCycleLength,
             title = "ثبت دوره جدید قاعدگی 🩸",
             onDismissRequest = { showNewCycleDialog = false },
@@ -968,6 +1014,23 @@ fun CalendarScreen(
             }
         )
     }
+}
+
+@Composable
+private fun ConfirmDeleteCycleDialog(record: CycleRecord, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val startJ = runCatching { JalaliCalendar.gregorianToJalali(LocalDate.parse(record.startDate)).formatLong() }
+        .getOrDefault(record.startDate)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("حذف این دوره؟", fontWeight = FontWeight.Bold) },
+        text = { Text("دوره‌ای که در $startJ شروع شده و روزهای پریود آن حذف می‌شود و پیش‌بینی‌ها دوباره محاسبه می‌شوند.", lineHeight = 22.sp) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("حذف شود", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+    )
 }
 
 @Composable
